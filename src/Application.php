@@ -297,8 +297,11 @@ class Application
     public function run(): void
     {
         try {
-            // ✅ Передаем $this->basePath в Router
-            $router = new Router($this->request, $this->container, $this->config, $this->basePath);
+            // Получаем Router из контейнера!
+            // Это гарантирует, что мы используем тот же экземпляр, 
+            // в котором AppServiceProvider уже зарегистрировал все группы middleware.
+            $router = $this->container->get(Router::class);
+            
             $router->dispatch();
         } catch (RedirectException $e) {
             $this->handleRedirect($e);

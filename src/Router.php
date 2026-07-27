@@ -20,6 +20,9 @@ class Router
     protected ?EventDispatcher $eventDispatcher = null;
     
     protected string $basePath;
+    
+    // ✅ НОВОЕ: Флаг для ленивой загрузки маршрутов
+    protected bool $routesLoaded = false;
 
     protected array $middlewareGroups = [
         'web' => [
@@ -30,27 +33,34 @@ class Router
     protected array $currentGroupMiddleware = [];
     protected string $currentGroupPrefix = '';
 
-    /**
-     * Позволяет приложению динамически регистрировать свои группы middleware.
-     * Ядро не знает о существовании 'auth', 'admin' и т.д., оно просто хранит массивы.
-     */
     public function addMiddlewareGroup(string $name, array $middlewares): void
     {
         $this->middlewareGroups[$name] = $middlewares;
     }
 
-
-    // ✅ ОБНОВЛЕН КОНСТРУКТОР: добавлен 4-й параметр $basePath
     public function __construct(Request $request, Container $container, Config $config, string $basePath)
     {
         $this->request = $request;
         $this->container = $container;
         $this->config = $config;
-        $this->basePath = $basePath; // ✅ Сохраняем базовый путь
-        
-        // ✅ ИСПРАВЛЕН ПУТЬ К КЭШУ (теперь он указывает в основной проект)
+        $this->basePath = $basePath;
         $this->cacheFile = $this->basePath . '/storage/cache/routes_compiled.php';
+        
+        // ❌ УДАЛЕНО: $this->loadRoutes(); 
+        // Маршруты теперь загружаются лениво, когда они действительно нужны.
+        // Это гарантирует, что AppServiceProvider успеет зарегистрировать все группы middleware.
+    }
+
+    /**
+     * Гарантирует, что маршруты загружены ровно один раз.
+     */
+    protected function ensureRoutesLoaded(): void
+    {
+        if ($this->routesLoaded) {
+            return;
+        }
         $this->loadRoutes();
+        $this->routesLoaded = true;
     }
 
     public function getCurrentRouteName(): ?string
@@ -60,6 +70,7 @@ class Router
 
     public function getNamedRoutes(): array
     {
+        $this->ensureRoutesLoaded();
         return $this->namedRoutes;
     }
 
@@ -78,10 +89,8 @@ class Router
         $this->loadModulesRoutes();
     }
 
-    // ✅ ИСПРАВЛЕН МЕТОД ЗАГРУЗКИ МАРШРУТОВ
     protected function loadModulesRoutes(): void
     {
-        // ✅ Теперь путь корректно указывает на app/Modules основного проекта
         $modulesPath = $this->basePath . '/app/Modules';
         
         if (!is_dir($modulesPath)) {
@@ -129,18 +138,16 @@ class Router
         $previousPrefix = $this->currentGroupPrefix;
 
         $middleware = $options['middleware'] ?? [];
+        if (is_string($middleware)) {
+            $middleware = [$middleware];
+        }
         $prefix = $options['prefix'] ?? '';
 
-        $expandedMiddleware = [];
-        foreach ($middleware as $m) {
-            if (isset($this->middlewareGroups[$m])) {
-                $expandedMiddleware = array_merge($expandedMiddleware, $this->middlewareGroups[$m]);
-            } else {
-                $expandedMiddleware[] = $m;
-            }
-        }
-
-        $this->currentGroupMiddleware = array_merge($previousMiddleware, $expandedMiddleware);
+        // ❌ УДАЛЕНО: Раскрытие групп здесь! 
+        // Просто сохраняем имена групп как есть (например, ['web', 'auth'])
+        // Они будут раскрыты позже в executeWithMiddleware(), когда все группы уже зарегистрированы
+        
+        $this->currentGroupMiddleware = array_merge($previousMiddleware, $middleware);
         $this->currentGroupPrefix = $previousPrefix . $prefix;
 
         $callback($this);
@@ -151,6 +158,8 @@ class Router
 
     public function compileCache(): void
     {
+        $this->ensureRoutesLoaded();
+        
         $this->routes = [];
         $this->namedRoutes = [];
         $this->routeMiddleware = [];
@@ -183,6 +192,8 @@ class Router
 
     public function route(string $name, array $params = []): string
     {
+        $this->ensureRoutesLoaded();
+        
         if (!isset($this->namedRoutes[$name])) {
             $logger = $this->container->get(Logger::class);
             $logger->error("Попытка генерации несуществующего именованного маршрута: '{$name}'");
@@ -204,10 +215,12 @@ class Router
 
     public function dispatch(): void
     {
+        // ✅ КРИТИЧЕСКИ ВАЖНО: Загружаем маршруты ПЕРЕД обработкой запроса
+        $this->ensureRoutesLoaded();
+        
         $uri = $this->request->getUri();
         $method = $this->request->getMethod();
 
-        // ✅ Rate limiting через конфиг
         $this->applyRateLimiting($uri, $method);
 
         if (!isset($this->routes[$method])) {
@@ -259,13 +272,24 @@ class Router
             return;
         }
 
+        // ✅ Двойная защита: раскрываем группы еще раз на всякий случай
+        $finalMiddlewareClasses = [];
+        foreach ($middleware as $item) {
+            if (isset($this->middlewareGroups[$item])) {
+                $finalMiddlewareClasses = array_merge($finalMiddlewareClasses, $this->middlewareGroups[$item]);
+            } else {
+                $finalMiddlewareClasses[] = $item;
+            }
+        }
+
         $pipeline = new MiddlewarePipeline($this->container);
-        foreach ($middleware as $middlewareClass) {
+        
+        foreach ($finalMiddlewareClasses as $middlewareClass) {
             if (class_exists($middlewareClass)) {
                 $pipeline->pipe($middlewareClass);
             } else {
                 $logger = $this->container->get(Logger::class);
-                $logger->warning("Middleware class not found: {$middlewareClass}");
+                $logger->error("КРИТИЧЕСКАЯ ОШИБКА: Middleware class not found: {$middlewareClass}");
             }
         }
 
