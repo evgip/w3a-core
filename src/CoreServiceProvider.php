@@ -29,11 +29,13 @@ class CoreServiceProvider
         // 3. Session
         $container->singleton(Session::class, fn() => new Session());
 
-        // 4. Logger (✅ ИСПРАВЛЕНО: Путь берется из конфига, а не жестко задан)
+        // 4. Logger
         $container->singleton(Logger::class, function ($container) {
             $config = $container->get(Config::class);
-            // Если путь не указан в конфиге, используем разумное значение по умолчанию
-            $logFile = $config->get('config.app.log_path', dirname(__DIR__, 2) . '/storage/logs/app.log');
+            $app = $container->get(Application::class);
+            
+            // Если путь не указан в конфиге, используем basePath приложения
+            $logFile = $config->get('config.app.log_path', $app->getBasePath() . '/storage/logs/app.log');
             return new Logger($logFile);
         });
 
@@ -44,7 +46,7 @@ class CoreServiceProvider
             return new IpResolver($trustedProxies);
         });
 
-        // 6. Audit (✅ Использует интерфейс, как и договаривались)
+        // 6. Audit
         $container->singleton(Audit::class, function ($container) {
             return new Audit(
                 $container->get(\W3a\Core\Contracts\AuditStorageInterface::class),
@@ -54,14 +56,11 @@ class CoreServiceProvider
         });
 
         // 7. Validator
-        // ⚠️ ПРИМЕЧАНИЕ: Если Validator делает SQL-проверки (например, 'unique:users,email'), 
-        // ему тоже в будущем понадобится интерфейс (например, UniqueCheckerInterface). 
-        // Пока оставляем как есть, если он только валидирует форматы.
         $container->bind(Validator::class, function ($container) {
             return new Validator($container->get(Database::class));
         });
 
-        // 8. RateLimiter (✅ Использует только интерфейсы)
+        // 8. RateLimiter
         $container->singleton(RateLimiter::class, function ($container) {
             return new RateLimiter(
                 $container->get(\W3a\Core\Contracts\RateLimitStorageInterface::class),
@@ -72,7 +71,7 @@ class CoreServiceProvider
             );
         });
 
-        // 9. Firewall (✅ ДОБАВЛЕНО: Регистрация с новым интерфейсом)
+        // 9. Firewall
         $container->singleton(Firewall::class, function ($container) {
             return new Firewall(
                 $container->get(\W3a\Core\Contracts\BannedIpRepositoryInterface::class),
@@ -82,11 +81,14 @@ class CoreServiceProvider
 
         // 10. Router
         $container->singleton(Router::class, function ($container) {
+            $app = $container->get(Application::class);
+            $basePath = $app->getBasePath();
+            
             return new Router(
                 $container->get(Request::class),
                 $container,
                 $container->get(Config::class),
-				dirname(__DIR__, 2)
+                $basePath
             );
         });
 
@@ -106,16 +108,21 @@ class CoreServiceProvider
         // 14. View & ViewFinder
         $container->singleton(View::class, fn() => new View());
         $container->singleton(ViewFinder::class, function ($container) {
+            $app = $container->get(Application::class);
+            $basePath = $app->getBasePath();
+            
             return new ViewFinder(
                 $container->get(Config::class),
-                dirname(__DIR__, 2) // ✅ Передаем путь к корню проекта (soc.local)
+                $basePath 
             );
         });
 
-        // 15. Cache (✅ ИСПРАВЛЕНО: Путь берется из конфига)
+        // 15. Cache (Использует basePath из Application)
         $container->singleton(\W3a\Core\Cache\FileCache::class, function ($container) {
             $config = $container->get(Config::class);
-            $cacheDir = $config->get('config.cache.file.path', dirname(__DIR__, 2) . '/storage/cache/data');
+            $app = $container->get(Application::class); // Получаем экземпляр Application
+            
+            $cacheDir = $config->get('config.cache.file.path', $app->getBasePath() . '/storage/cache/data');
             return new \W3a\Core\Cache\FileCache($cacheDir);
         });
 

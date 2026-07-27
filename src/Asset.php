@@ -24,7 +24,7 @@ class Asset
     private static string $distAdminCssFile;
     private static string $distJsFile;
     
-    /** @var Container|null Контейнер для получения сервисов (Config, Logger) */
+    /** @var Container|null Контейнер для получения сервисов (Config, Logger, Application) */
     private static ?Container $container = null;
 
     /**
@@ -34,6 +34,30 @@ class Asset
     public static function setContainer(Container $container): void
     {
         self::$container = $container;
+    }
+
+    /**
+     * 🔥 УМНЫЙ ПОИСК БАЗОВОГО ПУТИ К КОРНЮ ПРОЕКТА
+     * Гарантирует работу как при локальной разработке, так и при установке через Composer.
+     */
+    private static function getBasePath(): string
+    {
+        // 1. Пытаемся получить из Application через контейнер
+        if (self::$container !== null && self::$container->has(Application::class)) {
+            return self::$container->get(Application::class)->getBasePath();
+        }
+
+        // 2. Fallback: поднимаемся по дереву каталогов, ищем папку, где есть 'vendor' и 'app'
+        $currentDir = dirname(__DIR__);
+        while ($currentDir !== dirname($currentDir)) {
+            if (is_dir($currentDir . '/vendor') && is_dir($currentDir . '/app')) {
+                return $currentDir;
+            }
+            $currentDir = dirname($currentDir);
+        }
+
+        // 3. Крайний случай (если ядро используется изолированно)
+        return dirname(__DIR__, 2);
     }
 
     /**
@@ -64,7 +88,8 @@ class Asset
             // Игнорируем ошибки контейнера и переходим к fallback
         }
 
-        $configPath = dirname(__DIR__) . '/Config/config.php';
+        // Используем getBasePath() вместо dirname(__DIR__)
+        $configPath = self::getBasePath() . '/app/Config/config.php';
         if (file_exists($configPath)) {
             $config = require $configPath;
             return $config['app']['theme'] ?? 'default';
@@ -78,7 +103,8 @@ class Asset
      */
     private static function init(): void
     {
-        $publicDir = dirname(__DIR__, 2) . '/public';
+        // Используем getBasePath() вместо dirname(__DIR__, 2)
+        $publicDir = self::getBasePath() . '/public';
         self::$distCssFile      = $publicDir . '/css/app.min.css';
         self::$distAdminCssFile = $publicDir . '/css/admin.min.css';
         self::$distJsFile       = $publicDir . '/js/app.min.js';
@@ -88,10 +114,6 @@ class Asset
     // ПУБЛИЧНЫЕ МЕТОДЫ ДЛЯ ШАБЛОНОВ (Генерация URL с кэш-бастингом)
     // =========================================================================
 
-    /**
-     * Получить URL публичного CSS с параметром версии для сброса кэша браузера.
-     * В режиме development автоматически проверяет необходимость перекомпиляции.
-     */
     public static function css(): string
     {
         self::init();
@@ -102,9 +124,6 @@ class Asset
         return "/css/app.min.css?v=" . $version;
     }
 
-    /**
-     * Получить URL админского CSS с параметром версии.
-     */
     public static function adminCss(): string
     {
         self::init();
@@ -115,9 +134,6 @@ class Asset
         return "/css/admin.min.css?v=" . $version;
     }
 
-    /**
-     * Получить URL публичного JS с параметром версии.
-     */
     public static function js(): string
     {
         self::init();
@@ -132,10 +148,6 @@ class Asset
     // МЕТОДЫ ДЛЯ АДМИНКИ (Ручная пересборка)
     // =========================================================================
 
-    /**
-     * Принудительная пересборка всех ассетов.
-     * Вызывается из контроллера админки при нажатии кнопки "Перестроить CSS/JS".
-     */
     public static function forceRebuild(): void
     {
         self::init();
@@ -147,18 +159,14 @@ class Asset
     // ВНУТРЕННЯЯ ЛОГИКА ОБНАРУЖЕНИЯ И СБОРКИ
     // =========================================================================
 
-    /**
-     * Рекурсивно найти все файлы с заданным расширением в модулях и активной теме.
-     * 
-     * @param string $extension Расширение файла без точки ('css' или 'js')
-     * @return array Массив абсолютных путей к найденным файлам, отсортированный по имени
-     */
     private static function discoverFiles(string $extension): array
     {
         $discovered = [];
-        $modulesPath = dirname(__DIR__) . '/Modules';
+        
+        // Используем getBasePath()
+        $modulesPath = self::getBasePath() . '/app/Modules';
         $theme = self::getActiveTheme();
-        $themeAssetsPath = dirname(__DIR__, 2) . "/themes/{$theme}/assets";
+        $themeAssetsPath = self::getBasePath() . "/themes/{$theme}/assets";
 
         if (is_dir($modulesPath)) {
             $discovered = array_merge($discovered, self::scanDirectory($modulesPath, $extension));
@@ -168,27 +176,19 @@ class Asset
             $discovered = array_merge($discovered, self::scanDirectory($themeAssetsPath, $extension));
         }
 
-        // УЛУЧШЕНИЕ: Умная сортировка
-        // 1. Сначала файлы из Modules/Common (наш css фреймворк должен быть первым)
-        // 2. Затем остальные модули
-        // 3. В конце файлы темы (чтобы тема могла переопределять всё)
         usort($discovered, function ($a, $b) {
-            $isCommonA = strpos($a, 'Modules' . DIRECTORY_SEPARATOR . 'Common') !== false;
-            $isCommonB = strpos($b, 'Modules' . DIRECTORY_SEPARATOR . 'Common') !== false;
+            $isCommonA = strpos($a, 'app' . DIRECTORY_SEPARATOR . 'Modules' . DIRECTORY_SEPARATOR . 'Common') !== false;
+            $isCommonB = strpos($b, 'app' . DIRECTORY_SEPARATOR . 'Modules' . DIRECTORY_SEPARATOR . 'Common') !== false;
             
-            if ($isCommonA && !$isCommonB) return -1; // A (Common) идет раньше B
-            if (!$isCommonA && $isCommonB) return 1;  // B (Common) идет раньше A
+            if ($isCommonA && !$isCommonB) return -1;
+            if (!$isCommonA && $isCommonB) return 1;
             
-            // Если оба не Common или оба Common, сортируем по алфавиту (сработают префиксы 00_, 01_)
             return strcmp($a, $b);
         });
 
         return $discovered;
     }
 
-    /**
-     * Вспомогательный метод для рекурсивного сканирования директории.
-     */
     private static function scanDirectory(string $directory, string $extension): array
     {
         $dirIterator = new RecursiveDirectoryIterator($directory);
@@ -202,9 +202,6 @@ class Asset
         return $files;
     }
 
-    /**
-     * Проверить, нужно ли перекомпилировать CSS (сравнение mtime исходников и бандла).
-     */
     private static function compileCssIfNeeded(): void
     {
         $cssFiles = self::discoverFiles('css');
@@ -215,13 +212,11 @@ class Asset
 
         foreach ($cssFiles as $path) {
             if (file_exists($path)) {
-                // Определяем, является ли файл админским
-                $isAdminFile = (strpos($path, 'Modules' . DIRECTORY_SEPARATOR . 'Admin') !== false) || 
+                $isAdminFile = (strpos($path, 'app' . DIRECTORY_SEPARATOR . 'Modules' . DIRECTORY_SEPARATOR . 'Admin') !== false) || 
                                (strpos($path, 'themes' . DIRECTORY_SEPARATOR . self::getActiveTheme() . DIRECTORY_SEPARATOR . 'admin') !== false);
                 
                 $targetMtime = $isAdminFile ? $mtimeAdmin : $mtimeApp;
 
-                // Если исходный файл новее скомпилированного, нужна пересборка
                 if (filemtime($path) > $targetMtime) {
                     $needRebuild = true;
                     break;
@@ -229,15 +224,11 @@ class Asset
             }
         }
 
-        // Пересобираем, если найден измененный файл, или если бандлы еще не существуют (mtime === 0)
         if ($needRebuild || $mtimeApp === 0 || $mtimeAdmin === 0) {
             self::buildCss();
         }
     }
 
-    /**
-     * Физическая сборка и минификация CSS файлов.
-     */
     private static function buildCss(): void
     {
         $files = self::discoverFiles('css');
@@ -247,15 +238,16 @@ class Asset
 
         $appCount = 0;
         $adminCount = 0;
-        $rootDir = dirname(__DIR__, 2); // Корень проекта для относительных путей в комментариях
+        
+        // Используем getBasePath()
+        $rootDir = self::getBasePath();
 
         foreach ($files as $path) {
             if (file_exists($path)) {
                 $shortPath = str_replace($rootDir, '', $path);
                 $content = "/* Source: {$shortPath} */" . PHP_EOL . file_get_contents($path) . PHP_EOL . PHP_EOL;
 
-                // Разделяем на публичный и админский бандлы
-                $isAdminFile = (strpos($path, 'Modules' . DIRECTORY_SEPARATOR . 'Admin') !== false) || 
+                $isAdminFile = (strpos($path, 'app' . DIRECTORY_SEPARATOR . 'Modules' . DIRECTORY_SEPARATOR . 'Admin') !== false) || 
                                (strpos($path, 'themes' . DIRECTORY_SEPARATOR . self::getActiveTheme() . DIRECTORY_SEPARATOR . 'admin') !== false);
 
                 if ($isAdminFile) {
@@ -268,12 +260,11 @@ class Asset
             }
         }
 
-        // Простая, но эффективная минификация CSS (удаляет комментарии, лишние пробелы и переносы)
         $minify = function (string $css): string {
-            $css = preg_replace('!/\*[^*]*\*+([^/*][^*]*\*+)*/!', '', $css); // Удалить комментарии
-            $css = str_replace(["\r\n", "\r", "\n", "\t"], '', $css);       // Удалить переносы строк и табы
-            $css = preg_replace('/ {2,}/', ' ', $css);                      // Множественные пробелы в один
-            return str_replace([' {', '{ ', '; '], ['{', '{', ';'], $css);  // Убрать пробелы вокруг скобок и точек с запятой
+            $css = preg_replace('!/\*[^*]*\*+([^/*][^*]*\*+)*/!', '', $css);
+            $css = str_replace(["\r\n", "\r", "\n", "\t"], '', $css);
+            $css = preg_replace('/ {2,}/', ' ', $css);
+            return str_replace([' {', '{ ', '; '], ['{', '{', ';'], $css);
         };
 
         $dir = dirname(self::$distCssFile);
@@ -281,7 +272,6 @@ class Asset
             mkdir($dir, 0755, true);
         }
 
-        // Атомарная запись (опционально, но file_put_contents с LOCK_EX достаточно надежен)
         file_put_contents(self::$distCssFile, $minify($appCss), LOCK_EX);
         file_put_contents(self::$distAdminCssFile, $minify($adminCss), LOCK_EX);
 
@@ -289,9 +279,6 @@ class Asset
         $logger->info("Asset Compiler: Сборка CSS завершена. app.min.css (файлов: {$appCount}), admin.min.css (файлов: {$adminCount}). Активная тема: " . self::getActiveTheme());
     }
 
-    /**
-     * Проверить, нужно ли перекомпилировать JS.
-     */
     private static function compileJsIfNeeded(): void
     {
         $distMtime = file_exists(self::$distJsFile) ? filemtime(self::$distJsFile) : 0;
@@ -310,22 +297,18 @@ class Asset
         }
     }
 
-    /**
-     * Физическая сборка JS файлов с учетом приоритета core_utils.js.
-     */
     private static function buildJs(): void
     {
         $compiled = "/* JavaScript Bundle: " . date('Y-m-d H:i:s') . " */" . PHP_EOL;
         $files = self::discoverFiles('js');
 
-        // Файл с базовыми утилитами должен быть загружен ПЕРВЫМ
-        $priorityFile = dirname(__DIR__) . '/Modules/Common/Views/js/core_utils.js';
+        // Используем getBasePath()
+        $priorityFile = self::getBasePath() . '/app/Modules/Common/Views/js/core_utils.js';
         
         $orderedFiles = [];
         $otherFiles = [];
         
         foreach ($files as $path) {
-            // Используем realpath для надежного сравнения путей
             if (realpath($path) === realpath($priorityFile)) {
                 array_unshift($orderedFiles, $path);
             } else {
@@ -333,19 +316,18 @@ class Asset
             }
         }
         
-        // Объединяем: сначала core_utils, потом все остальные (включая файлы темы)
         $files = array_merge($orderedFiles, $otherFiles);
-        $rootDir = dirname(__DIR__, 2);
+        
+        // Используем getBasePath()
+        $rootDir = self::getBasePath();
 
         foreach ($files as $path) {
             if (file_exists($path)) {
                 $shortPath = str_replace($rootDir, '', $path);
-                // Добавляем точку с запятой перед каждым файлом для защиты от слитых инструкций (IIFE safety)
                 $compiled .= ";" . PHP_EOL . "/* Source: {$shortPath} */" . PHP_EOL . file_get_contents($path) . PHP_EOL;
             }
         }
 
-        // Минификация JS (удаление многострочных комментариев, однострочных комментариев, лишних пробелов)
         $compiled = preg_replace('!/\*[^*]*\*+([^/*][^*]*\*+)*/!', '', $compiled);
         $compiled = preg_replace('/^[ \t]*\/\/.*$/m', '', $compiled);
         $compiled = str_replace("\t", " ", $compiled);
@@ -362,9 +344,6 @@ class Asset
         $logger->info("Asset Compiler: JS сборка обновлена. Всего файлов: " . count($files) . ". Активная тема: " . self::getActiveTheme());
     }
 
-    /**
-     * Проверка, находится ли приложение в режиме разработки.
-     */
     private static function isDevelopment(): bool
     {
         try {
@@ -375,12 +354,13 @@ class Asset
             // Fallback
         }
         
-        $configPath = dirname(__DIR__) . '/Config/config.php';
+        // Используем getBasePath()
+        $configPath = self::getBasePath() . '/app/Config/config.php';
         if (file_exists($configPath)) {
             $config = require $configPath;
             return ($config['app']['env'] ?? 'development') === 'development';
         }
         
-        return true; // По умолчанию считаем development безопаснее
+        return true;
     }
 }

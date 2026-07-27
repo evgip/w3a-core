@@ -1,6 +1,10 @@
 <?php
 
+declare(strict_types=1);
+
 namespace W3a\Core;
+
+use RuntimeException;
 
 class Logger
 {
@@ -8,15 +12,30 @@ class Logger
     private string $dateFormat;
 
     /**
-     * Конструктор с инъекцией пути к файлу логов
+     * Конструктор с инъекцией пути к файлу логов.
      * 
-     * @param string|null $logFile Путь к файлу логов (по умолчанию: storage/logs/app.log)
-     * @param string $dateFormat Формат даты
+     * @param string|null $logFile Абсолютный путь к файлу логов. 
+     *                             Если null, будет предпринята попытка умного поиска корня проекта.
+     * @param string $dateFormat Формат даты для записей в логе
      */
     public function __construct(?string $logFile = null, string $dateFormat = 'Y-m-d H:i:s')
     {
         if ($logFile === null) {
-            $logFile = dirname(__DIR__, 2) . '/storage/logs/app.log';
+            // 🔥 УМНЫЙ ПОИСК КОРНЯ ПРОЕКТА
+            // Поднимаемся по дереву каталогов, пока не найдем папку, где есть 'vendor' и 'app'
+            $currentDir = dirname(__DIR__);
+            while ($currentDir !== dirname($currentDir)) {
+                if (is_dir($currentDir . '/vendor') && is_dir($currentDir . '/app')) {
+                    $logFile = $currentDir . '/storage/logs/app.log';
+                    break;
+                }
+                $currentDir = dirname($currentDir);
+            }
+            
+            // Fallback: если умный поиск не сработал (например, ядро используется изолированно)
+            if ($logFile === null) {
+                $logFile = dirname(__DIR__, 2) . '/storage/logs/app.log';
+            }
         }
 
         $this->logFile = $logFile;
@@ -25,7 +44,9 @@ class Logger
         // Создаём директорию, если её нет
         $logDir = dirname($this->logFile);
         if (!is_dir($logDir)) {
-            mkdir($logDir, 0755, true);
+            if (!mkdir($logDir, 0755, true) && !is_dir($logDir)) {
+                throw new RuntimeException("Не удалось создать директорию для логов: {$logDir}");
+            }
         }
     }
 

@@ -41,6 +41,14 @@ class Application
     }
 
     /**
+     * Получить базовый путь к корню проекта.
+     */
+    public function getBasePath(): string
+    {
+        return $this->basePath;
+    }
+
+    /**
      * Путь к директории модулей основного приложения
      */
     private function getModulesPath(): string
@@ -63,6 +71,7 @@ class Application
         $this->container = new Container();
         $this->container->instance(Container::class, $this->container);
         $this->container->instance(Config::class, $this->config);
+		$this->container->instance(Application::class, $this);
 
 		// Инициализируем глобальный хелпер container()
         container($this->container); 
