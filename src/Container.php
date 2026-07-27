@@ -148,7 +148,7 @@ class Container
                             $resolved[] = null;
                         } else {
                             throw new RuntimeException(
-                                "Cannot resolve parameter \${$name} of type {$className}: " . $e->getMessage()
+                                "Cannot resolve parameter {$name} of type {$className}: " . $e->getMessage()
                             );
                         }
                     }
@@ -161,7 +161,7 @@ class Container
                 $resolved[] = null;
             } else {
                 throw new RuntimeException(
-                    "Cannot resolve parameter \${$name}: no type hint, no default value"
+                    "Cannot resolve parameter {$name}: no type hint, no default value"
                 );
             }
         }
