@@ -63,13 +63,13 @@ class Asset
     /**
      * Получить логгер из контейнера с fallback на глобальный контейнер.
      */
-    private static function getLogger(): Logger
+	private static function getLogger(): Logger
     {
         if (self::$container === null) {
-            if (!isset($GLOBALS['app_container'])) {
-                throw new \RuntimeException('Container not initialized for Asset Logger');
-            }
-            self::$container = $GLOBALS['app_container'];
+            throw new \RuntimeException(
+                'Container not initialized for Asset. ' .
+                'Call \W3a\Core\Asset::setContainer($container) in Application::bootstrap() first.'
+            );
         }
         return self::$container->get(Logger::class);
     }
@@ -212,8 +212,7 @@ class Asset
 
         foreach ($cssFiles as $path) {
             if (file_exists($path)) {
-                $isAdminFile = (strpos($path, 'app' . DIRECTORY_SEPARATOR . 'Modules' . DIRECTORY_SEPARATOR . 'Admin') !== false) || 
-                               (strpos($path, 'themes' . DIRECTORY_SEPARATOR . self::getActiveTheme() . DIRECTORY_SEPARATOR . 'admin') !== false);
+                $isAdminFile = self::isAdminAsset($path);
                 
                 $targetMtime = $isAdminFile ? $mtimeAdmin : $mtimeApp;
 
@@ -238,8 +237,6 @@ class Asset
 
         $appCount = 0;
         $adminCount = 0;
-        
-        // Используем getBasePath()
         $rootDir = self::getBasePath();
 
         foreach ($files as $path) {
@@ -247,10 +244,8 @@ class Asset
                 $shortPath = str_replace($rootDir, '', $path);
                 $content = "/* Source: {$shortPath} */" . PHP_EOL . file_get_contents($path) . PHP_EOL . PHP_EOL;
 
-                $isAdminFile = (strpos($path, 'app' . DIRECTORY_SEPARATOR . 'Modules' . DIRECTORY_SEPARATOR . 'Admin') !== false) || 
-                               (strpos($path, 'themes' . DIRECTORY_SEPARATOR . self::getActiveTheme() . DIRECTORY_SEPARATOR . 'admin') !== false);
-
-                if ($isAdminFile) {
+                // 🔥 ИСПОЛЬЗУЕМ НОВЫЙ НАДЕЖНЫЙ МЕТОД ПРОВЕРКИ 🔥
+                if (self::isAdminAsset($path)) {
                     $adminCss .= $content;
                     $adminCount++;
                 } else {
@@ -362,5 +357,19 @@ class Asset
         }
         
         return true;
+    }
+	
+    /**
+     * Проверяет, относится ли файл ассетов к панели администратора.
+     * Использует нормализацию пути для надежности на Windows/Linux и независимости от регистра.
+     */
+    private static function isAdminAsset(string $path): bool
+    {
+        // Приводим путь к нижнему регистру и заменяем обратные слеши на прямые
+        $normalizedPath = strtolower(str_replace('\\', '/', $path));
+        $theme = strtolower(self::getActiveTheme());
+
+        return (strpos($normalizedPath, 'app/modules/admin') !== false) ||
+               (strpos($normalizedPath, "themes/{$theme}/admin") !== false);
     }
 }

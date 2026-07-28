@@ -72,6 +72,10 @@ class Application
         $this->container->instance(Container::class, $this->container);
         $this->container->instance(Config::class, $this->config);
 		$this->container->instance(Application::class, $this);
+		
+		// Передаем контейнер в статический класс Asset
+        \W3a\Core\Asset::setContainer($this->container);
+
 
 		// Инициализируем глобальный хелпер container()
         container($this->container); 
