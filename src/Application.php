@@ -167,12 +167,14 @@ class Application
         $modulesPath = $this->getModulesPath();
         $cacheFile = $this->getProvidersCachePath();
 
-        if (!is_dir($modulesPath)) {
-            return [];
+        if (!is_dir($this->basePath . '/vendor')) {
+            // Если vendor еще не установлен, возвращаем только локальные
+            return $this->rebuildProvidersCache($cacheFile, $modulesPath);
         }
 
         $env = $this->config->get('app.env', 'development');
 
+        // В продакшене всегда используем кэш, если он есть
         if ($env === 'production' && file_exists($cacheFile)) {
             $cache = @include $cacheFile;
             if (is_array($cache) && isset($cache['providers'])) {
@@ -180,9 +182,15 @@ class Application
             }
         }
 
-        if (file_exists($cacheFile) && !$this->isProvidersCacheStale($cacheFile, $modulesPath)) {
+        // В разработке пересобираем кэш, если изменился composer.lock или папка app/Modules
+        $lockFile = $this->basePath . '/composer.lock';
+        $lockMtime = file_exists($lockFile) ? filemtime($lockFile) : 0;
+        $modulesMtime = is_dir($modulesPath) ? filemtime($modulesPath) : 0;
+        $checkMtime = max($lockMtime, $modulesMtime);
+
+        if (file_exists($cacheFile)) {
             $cache = @include $cacheFile;
-            if (is_array($cache) && isset($cache['providers'])) {
+            if (is_array($cache) && isset($cache['cache_time']) && $cache['cache_time'] >= $checkMtime) {
                 return $cache['providers'];
             }
         }
@@ -227,17 +235,50 @@ class Application
     private function rebuildProvidersCache(string $cacheFile, string $modulesPath): array
     {
         $providers = [];
-        $modules = array_diff(scandir($modulesPath), ['.', '..']);
 
-        foreach ($modules as $module) {
-            $providerClass = "App\\Modules\\{$module}\\ModuleServiceProvider";
+        // 1. СКАНИРОВАНИЕ LOCAL МОДУЛЕЙ (как было, для app/Modules)
+        if (is_dir($modulesPath)) {
+            $modules = array_diff(scandir($modulesPath), ['.', '..']);
+            foreach ($modules as $module) {
+                $providerClass = "App\\Modules\\{$module}\\ModuleServiceProvider";
+                if (class_exists($providerClass)) {
+                    $configPath = $modulesPath . '/' . $module . '/Config';
+                    $providers['local_' . $module] = [ // Добавил префикс, чтобы избежать коллизий имен
+                        'class' => $providerClass,
+                        'config_path' => is_dir($configPath) ? $configPath : null,
+                        'source' => 'local'
+                    ];
+                }
+            }
+        }
 
-            if (class_exists($providerClass)) {
-                $configPath = $modulesPath . '/' . $module . '/Config';
-                $providers[$module] = [
-                    'class' => $providerClass,
-                    'config_path' => is_dir($configPath) ? $configPath : null,
-                ];
+        // 2. СКАНИРОВАНИЕ COMPOSER ПАКЕТОВ (Package Discovery!)
+        $installedJsonPath = $this->basePath . '/vendor/composer/installed.json';
+        if (file_exists($installedJsonPath)) {
+            $installed = json_decode(file_get_contents($installedJsonPath), true);
+            $packages = $installed['packages'] ?? $installed; // Учет разных форматов installed.json
+
+            foreach ($packages as $package) {
+                // Ищем специальную секцию в composer.json пакета: "extra": { "w3a-core": { "providers": [...] } }
+                if (isset($package['extra']['w3a-core']['providers']) && is_array($package['extra']['w3a-core']['providers'])) {
+                    foreach ($package['extra']['w3a-core']['providers'] as $providerClass) {
+                        if (class_exists($providerClass)) {
+                            // Пытаемся угадать путь к конфигам пакета (стандарт: vendor/имя_пакета/Config)
+                            $packageName = $package['name']; // например, "evgip/w3a-auth"
+                            $vendorPath = $this->basePath . '/vendor/' . str_replace('/', '/', $packageName);
+                            $configPath = is_dir($vendorPath . '/Config') ? $vendorPath . '/Config' : null;
+
+                            // Используем имя пакета + класс как уникальный ключ
+                            $cacheKey = 'pkg_' . md5($providerClass);
+                            $providers[$cacheKey] = [
+                                'class' => $providerClass,
+                                'config_path' => $configPath,
+                                'source' => 'vendor',
+                                'package' => $packageName
+                            ];
+                        }
+                    }
+                }
             }
         }
 
@@ -245,7 +286,6 @@ class Application
             'providers' => $providers,
             'cache_time' => time(),
             'generated_at' => date('Y-m-d H:i:s'),
-            'modules_mtime' => filemtime($modulesPath),
         ];
 
         $this->writeCacheAtomic($cacheFile, $cacheData);
