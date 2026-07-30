@@ -2,7 +2,9 @@
 
 declare(strict_types=1);
 
-use W3a\Core\Container;
+use W3a\Core\Foundation\Container;
+use W3a\Core\Foundation\Config;
+use W3a\Core\Foundation\Env;
 
 /**
  * Получение сервиса из DI-контейнера или его инициализация.
@@ -16,7 +18,7 @@ use W3a\Core\Container;
  * container($appContainer);
  * 
  * // Получение сервиса:
- * $logger = container(\W3a\Core\Logger::class);
+ * $logger = container(\W3a\Core\Support\Logger::class);
  */
 if (!function_exists('container')) {
     function container(string|Container|null $abstract = null): mixed
@@ -50,7 +52,7 @@ if (!function_exists('container')) {
 if (!function_exists('config')) {
     function config(?string $key = null, mixed $default = null): mixed
     {
-        $config = container(\W3a\Core\Config::class);
+        $config = container(Config::class);
         
         if ($key === null) {
             return $config;
@@ -73,6 +75,6 @@ if (!function_exists('config')) {
 if (!function_exists('env')) {
     function env(string $key, mixed $default = null): mixed
     {
-        return \W3a\Core\Env::get($key, $default);
+        return Env::get($key, $default);
     }
 }

@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace W3a\Core\Events\Listeners;
 
 use W3a\Core\Events\Event;
-use W3a\Core\Audit;
+use W3a\Core\Support\Audit;
 
 /**
  * Слушатель событий для аудита.

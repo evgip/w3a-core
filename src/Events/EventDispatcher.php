@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace W3a\Core\Events;
 
-use W3a\Core\Logger;
+use W3a\Core\Support\Logger;
 use Throwable;
 
 /**

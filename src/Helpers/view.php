@@ -32,7 +32,7 @@ if (!function_exists('e')) {
 if (!function_exists('__')) {
     function __(string $key, array $replace = []): string
     {
-        return \W3a\Core\Lang::get($key, $replace);
+        return \W3a\Core\Support\Lang::get($key, $replace);
     }
 }
 
@@ -61,7 +61,7 @@ if (!function_exists('partial')) {
         [$module, $file] = $parts;
 
         $theme = config('app.theme', 'default');
-        $basePath = container(\W3a\Core\Application::class)->getBasePath();
+        $basePath = container(\W3a\Core\Foundation\Application::class)->getBasePath();
         
         $appModulesPath = $basePath . '/app/Modules';
         $themesPath = $basePath . '/themes';
@@ -107,7 +107,7 @@ if (!function_exists('csrf_field')) {
     function csrf_field(): string
     {
         try {
-            return container(\W3a\Core\Request::class)->csrfField();
+            return container(\W3a\Core\Http\Request::class)->csrfField();
         } catch (\Throwable $e) {
             error_log("csrf_field() failed: " . $e->getMessage());
             return '<input type="hidden" name="_token" value="fallback_token">';
@@ -131,7 +131,7 @@ if (!function_exists('csp_nonce')) {
 
         if ($nonce === null) {
             try {
-                $security = container(\W3a\Core\Security::class);
+                $security = container(\W3a\Core\Security\Security::class);
                 $nonce = $security->getNonce();
             } catch (\Throwable $e) {
                 // Fallback, если Security не инициализирован или произошла ошибка

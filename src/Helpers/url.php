@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-use W3a\Core\Router;
+use W3a\Core\Http\Router;
 
 /**
  * Генерация URL по имени именованного маршрута.
