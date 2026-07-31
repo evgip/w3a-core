@@ -97,7 +97,12 @@ class Application
         // ═══════════════════════════════════════════
         // Config использует ленивую загрузку: файлы читаются с диска
         // только при первом обращении к их ключам.
-        $config = new Config($this->basePath . '/app/Config');
+        // Теперь мы передаем два пути: конфиги приложения и конфиги ядра.
+        // Настройки приложения будут иметь приоритет и перезаписывать настройки ядра.
+        $coreConfigPath = dirname(__DIR__, 2) . '/config'; // Путь к config внутри w3a-core
+        $appConfigPath = $this->basePath . '/app/Config';
+        
+        $config = new Config($appConfigPath, $coreConfigPath);
         $this->container->instance(Config::class, $config);
 
         // ═══════════════════════════════════════════

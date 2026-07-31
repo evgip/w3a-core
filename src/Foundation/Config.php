@@ -24,9 +24,15 @@ use RuntimeException;
 class Config
 {
     /**
-     * Путь к директории с файлами конфигурации (например, /app/Config).
+     * Путь к директории с файлами конфигурации приложения (например, /app/Config).
+     * Имеет высший приоритет при слиянии.
      */
     private string $configPath;
+
+    /**
+     * Путь к директории с файлами конфигурации ядра (значения по умолчанию).
+     */
+    private string $coreConfigPath = '';
 
     /**
      * Хранилище загруженных конфигураций.
@@ -45,15 +51,17 @@ class Config
     /**
      * Конструктор.
      *
-     * @param string $configPath Абсолютный путь к папке с конфигами (например, /app/Config)
-     * @throws RuntimeException Если директория не существует
+     * @param string $configPath Абсолютный путь к папке с конфигами приложения (например, /app/Config)
+     * @param string|null $coreConfigPath Абсолютный путь к папке с конфигами ядра (необязательно)
+     * @throws RuntimeException Если директория приложения не существует
      */
-    public function __construct(string $configPath)
+    public function __construct(string $configPath, ?string $coreConfigPath = null)
     {
         if (!is_dir($configPath)) {
             throw new RuntimeException("Директория конфигурации не найдена: {$configPath}");
         }
         $this->configPath = rtrim($configPath, '/\\');
+        $this->coreConfigPath = $coreConfigPath !== null ? rtrim($coreConfigPath, '/\\') : '';
     }
 
     /**
@@ -75,16 +83,17 @@ class Config
         $fileName = $parts[0];
         $arrayPath = $parts[1] ?? null;
 
-        // 2. 🔥 ЛЕНИВАЯ ЗАГРУЗКА: Если файл еще не загружен в память, загружаем его
+        // 2. 🔥 ЛЕНИВАЯ ЗАГРУЗКА И СЛИЯНИЕ: Если файл еще не загружен в память, загружаем и сливаем его
         if (!array_key_exists($fileName, $this->settings)) {
-            $filePath = $this->configPath . '/' . $fileName . '.php';
+            $coreFilePath = $this->coreConfigPath !== '' ? $this->coreConfigPath . '/' . $fileName . '.php' : '';
+            $appFilePath = $this->configPath . '/' . $fileName . '.php';
             
-            if (file_exists($filePath)) {
-                $this->settings[$fileName] = require $filePath;
-            } else {
-                // Файла не существует — сразу возвращаем дефолтное значение
-                return $default;
-            }
+            $coreData = ($coreFilePath !== '' && file_exists($coreFilePath)) ? require $coreFilePath : [];
+            $appData = file_exists($appFilePath) ? require $appFilePath : [];
+
+            // 🔥 СЛИЯНИЕ: Настройки приложения имеют приоритет над настройками ядра.
+            // Ключи, отсутствующие в приложении, будут взяты из ядра.
+            $this->settings[$fileName] = array_replace_recursive($coreData, $appData);
         }
 
         // 3. Если запрошен весь массив файла целиком (например, config('database'))
@@ -282,4 +291,3 @@ class Config
         return $current;
     }
 }
-
