@@ -10,32 +10,51 @@ use W3a\Core\Foundation\Config;
 class ConfigTest extends TestCase
 {
     private Config $config;
-    private string $testConfigPath;
+    private string $testAppConfigPath;
+    private string $testCoreConfigPath;
 
     protected function setUp(): void
     {
-        // Создаем временную папку для тестовых конфигов
-        $this->testConfigPath = sys_get_temp_dir() . '/w3a_test_config_' . uniqid();
-        mkdir($this->testConfigPath, 0777, true);
+        // Создаем временные папки для тестовых конфигов Ядра и Приложения
+        $this->testCoreConfigPath = sys_get_temp_dir() . '/w3a_test_core_config_' . uniqid();
+        $this->testAppConfigPath = sys_get_temp_dir() . '/w3a_test_app_config_' . uniqid();
+        
+        mkdir($this->testCoreConfigPath, 0777, true);
+        mkdir($this->testAppConfigPath, 0777, true);
 
-        // Создаем тестовый файл конфигурации
+        // 1. Создаем тестовый файл конфигурации в ЯДРЕ (базовые значения по умолчанию)
         file_put_contents(
-            $this->testConfigPath . '/database.php',
+            $this->testCoreConfigPath . '/database.php',
             "<?php return ['host' => 'localhost', 'port' => 3306, 'credentials' => ['user' => 'root', 'pass' => 'secret']];"
         );
 
         file_put_contents(
-            $this->testConfigPath . '/app.php',
-            "<?php return ['name' => 'Test App', 'debug' => true];"
+            $this->testCoreConfigPath . '/app.php',
+            "<?php return ['name' => 'Core App', 'debug' => false, 'version' => '1.0'];"
         );
 
-        $this->config = new Config($this->testConfigPath);
+        // 2. Создаем тестовый файл конфигурации в ПРИЛОЖЕНИИ (переопределения)
+        // Мы намеренно указываем здесь только те ключи, которые хотим изменить
+        file_put_contents(
+            $this->testAppConfigPath . '/database.php',
+            "<?php return ['host' => '192.168.1.100'];" // Переопределяем только host
+        );
+
+        file_put_contents(
+            $this->testAppConfigPath . '/app.php',
+            "<?php return ['debug' => true];" // Переопределяем только debug
+        );
+
+        // 3. Инициализируем Config с ОБОИМИ путями. 
+        // Приложение ($testAppConfigPath) имеет приоритет над Ядром ($testCoreConfigPath).
+        $this->config = new Config($this->testAppConfigPath, $this->testCoreConfigPath);
     }
 
     protected function tearDown(): void
     {
         // Удаляем временные файлы после теста
-        $this->removeDirectory($this->testConfigPath);
+        $this->removeDirectory($this->testAppConfigPath);
+        $this->removeDirectory($this->testCoreConfigPath);
     }
 
     private function removeDirectory(string $dir): void
@@ -45,9 +64,24 @@ class ConfigTest extends TestCase
         $files = array_diff(scandir($dir), ['.', '..']);
         foreach ($files as $file) {
             $path = $dir . '/' . $file;
-            is_dir($path) ? $this->removeDirectory($path) : unlink($path);
+            is_dir($path) ? $this->removeDirectory($path) : @unlink($path);
         }
         @rmdir($dir);
+    }
+
+    /**
+     * Тест: Слияние конфигов (App переопределяет Core, но сохраняет остальные ключи)
+     */
+    public function test_merges_core_and_app_configs_correctly(): void
+    {
+        // Проверяем, что значение из App перезаписало значение из Core
+        $this->assertEquals('192.168.1.100', $this->config->get('database.host'));
+        $this->assertTrue($this->config->get('app.debug')); 
+
+        // Проверяем, что значения, которых нет в App, успешно взялись из Core
+        $this->assertEquals(3306, $this->config->get('database.port')); // Из Core
+        $this->assertEquals('root', $this->config->get('database.credentials.user')); // Из Core (вложенный массив!)
+        $this->assertEquals('Core App', $this->config->get('app.name')); // Из Core
     }
 
     /**
@@ -55,7 +89,10 @@ class ConfigTest extends TestCase
      */
     public function test_it_gets_value_with_dot_notation(): void
     {
-        $this->assertEquals('localhost', $this->config->get('database.host'));
+        // Host теперь берется из App (переопределен)
+        $this->assertEquals('192.168.1.100', $this->config->get('database.host'));
+        
+        // Остальное берется из Core
         $this->assertEquals(3306, $this->config->get('database.port'));
         $this->assertEquals('root', $this->config->get('database.credentials.user'));
     }
@@ -78,8 +115,8 @@ class ConfigTest extends TestCase
         $this->assertFalse($this->config->get('app.debug'));
 
         // Можно установить новое значение, которого не было в файле
-        $this->config->set('app.version', '1.0.0');
-        $this->assertEquals('1.0.0', $this->config->get('app.version'));
+        $this->config->set('app.version_new', '2.0.0');
+        $this->assertEquals('2.0.0', $this->config->get('app.version_new'));
     }
 
     /**
@@ -96,16 +133,14 @@ class ConfigTest extends TestCase
      */
     public function test_it_loads_config_files_lazily(): void
     {
-        // Создаем новый конфиг с несуществующим файлом
-        $config = new Config($this->testConfigPath);
+        // Создаем новый конфиг с обоими путями
+        $config = new Config($this->testAppConfigPath, $this->testCoreConfigPath);
         
-        // Обращаемся к app.name — должен загрузиться app.php
-        $this->assertEquals('Test App', $config->get('app.name'));
+        // Обращаемся к app.name — должны загрузиться и слиться app.php из обоих путей
+        $this->assertEquals('Core App', $config->get('app.name'));
         
-        // Теперь обращаемся к database.host — должен загрузиться database.php
-        $this->assertEquals('localhost', $config->get('database.host'));
-        
-        // Если бы ленивая загрузка не работала, оба файла загрузились бы сразу
+        // Теперь обращаемся к database.host — должны загрузиться database.php
+        $this->assertEquals('192.168.1.100', $config->get('database.host'));
     }
 
     /**
@@ -116,8 +151,10 @@ class ConfigTest extends TestCase
         $appConfig = $this->config->get('app');
         
         $this->assertIsArray($appConfig);
-        $this->assertArrayHasKey('name', $appConfig);
-        $this->assertArrayHasKey('debug', $appConfig);
-        $this->assertEquals('Test App', $appConfig['name']);
+        $this->assertArrayHasKey('name', $appConfig);   // Из Core
+        $this->assertArrayHasKey('debug', $appConfig);  // Из App (переопределено)
+        $this->assertArrayHasKey('version', $appConfig); // Из Core
+        $this->assertEquals('Core App', $appConfig['name']);
+        $this->assertTrue($appConfig['debug']);
     }
 }
