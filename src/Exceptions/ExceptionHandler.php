@@ -21,19 +21,6 @@ class ExceptionHandler
 
     public function handle(\Throwable $e): void
     {
-        if ($e instanceof RedirectException) {
-            http_response_code($e->statusCode);
-            header('Location: ' . $e->url);
-            exit;
-        }
-
-        if ($e instanceof JsonResponseException) {
-            http_response_code($e->getStatusCode());
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode($e->getData(), JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
         if ($e instanceof CsrfException) {
             $this->handleCsrf($e);
             exit;
@@ -44,6 +31,7 @@ class ExceptionHandler
             exit;
         }
 
+        // Все остальные исключения (включая фатальные ошибки PHP) идут сюда
         $this->handleFatal($e);
     }
 

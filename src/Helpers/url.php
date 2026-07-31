@@ -3,6 +3,7 @@
 declare(strict_types=1);
 
 use W3a\Core\Http\Router;
+use W3a\Core\Http\RedirectResponse;
 
 /**
  * Генерация URL по имени именованного маршрута.
@@ -30,19 +31,16 @@ if (!function_exists('route')) {
 
 /**
  * Выполнение HTTP-редиректа.
- * Выбрасывает специальное исключение, которое перехватывается Application для чистого завершения запроса.
+ * Возвращает объект RedirectResponse, который будет отправлен роутером.
  *
  * @param string $url Целевой URL для перенаправления.
  * @param int $code HTTP-код статуса (по умолчанию 302 Found).
- * @return never Эта функция никогда не возвращает управление.
- * 
- * @example
- * return redirect('/login', 301);
+ * @return \W3a\Core\Http\RedirectResponse
  */
 if (!function_exists('redirect')) {
-    function redirect(string $url, int $code = 302): never
+    function redirect(string $url, int $code = 302): RedirectResponse
     {
-        throw new \W3a\Core\Exceptions\RedirectException($url, $code);
+        return new RedirectResponse($url, $code);
     }
 }
 

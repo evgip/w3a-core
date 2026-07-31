@@ -29,7 +29,7 @@ class Router
     
     protected string $basePath;
     
-    // ✅ НОВОЕ: Флаг для ленивой загрузки маршрутов
+    // Флаг для ленивой загрузки маршрутов
     protected bool $routesLoaded = false;
 
     protected array $middlewareGroups = [
@@ -151,10 +151,6 @@ class Router
         }
         $prefix = $options['prefix'] ?? '';
 
-        // ❌ УДАЛЕНО: Раскрытие групп здесь! 
-        // Просто сохраняем имена групп как есть (например, ['web', 'auth'])
-        // Они будут раскрыты позже в executeWithMiddleware(), когда все группы уже зарегистрированы
-        
         $this->currentGroupMiddleware = array_merge($previousMiddleware, $middleware);
         $this->currentGroupPrefix = $previousPrefix . $prefix;
 
@@ -276,11 +272,11 @@ class Router
     protected function executeWithMiddleware(string $action, array $params, array $middleware): void
     {
         if (empty($middleware)) {
-            $this->executeAction($action, $params);
+            // Перехватываем результат и передаем в обработчик
+            $this->handleResponse($this->executeAction($action, $params));
             return;
         }
 
-        // ✅ Двойная защита: раскрываем группы еще раз на всякий случай
         $finalMiddlewareClasses = [];
         foreach ($middleware as $item) {
             if (isset($this->middlewareGroups[$item])) {
@@ -301,35 +297,48 @@ class Router
             }
         }
 
+        // Destination теперь ВОЗВРАЩАЕТ результат executeAction
         $destination = function () use ($action, $params) {
-            $this->executeAction($action, $params);
+            return $this->executeAction($action, $params);
         };
 
-        $pipeline->process($destination);
+        // Получаем ответ из пайплайна и обрабатываем его
+        $response = $pipeline->process($destination);
+        $this->handleResponse($response);
     }
 
-    protected function executeAction(string $action, array $params): void
+    protected function executeAction(string $action, array $params): mixed 
     {
         if (strpos($action, '@') === false) {
             $this->triggerError(500, "Invalid action format: '$action'");
-            return;
+            return null;
         }
 
         [$controllerClass, $method] = explode('@', $action);
 
         if (!class_exists($controllerClass)) {
             $this->triggerError(500, "Controller class not found: $controllerClass");
-            return;
+            return null;
         }
 
         $controllerInstance = $this->container->make($controllerClass);
 
         if (!method_exists($controllerInstance, $method)) {
             $this->triggerError(500, "Method $method not found in $controllerClass");
-            return;
+            return null;
         }
 
-        call_user_func_array([$controllerInstance, $method], $params);
+        // ВОЗВРАЩАЕМ результат вызова метода контроллера
+        return call_user_func_array([$controllerInstance, $method], $params);
+    }
+
+    // Централизованная обработка ответа
+    protected function handleResponse(mixed $response): void
+    {
+        if ($response instanceof \W3a\Core\Http\Response) {
+            $response->send();
+            return; // Прерываем выполнение, заголовки отправлены
+        }
     }
 
     protected function triggerError(int $code, string $message): void

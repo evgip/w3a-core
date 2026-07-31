@@ -4,20 +4,17 @@ declare(strict_types=1);
 
 namespace W3a\Core\Http;
 
+use W3a\Core\Http\ViewResponse;
+use W3a\Core\Http\JsonResponse;
+use W3a\Core\Http\RedirectResponse;
 use W3a\Core\Events\Event;
 use W3a\Core\Events\EventDispatcher;
-use W3a\Core\Exceptions\JsonResponseException;
-use W3a\Core\Exceptions\RedirectException;
 use W3a\Core\Contracts\UserIdProviderInterface;
-
 use W3a\Core\View\View;
 use W3a\Core\View\ViewFinder;
-
 use W3a\Core\Foundation\Container;
 use W3a\Core\Foundation\Config;
-
 use W3a\Core\Support\Lang;
-
 use W3a\Core\Support\Logger;
 
 /**
@@ -77,11 +74,9 @@ abstract class Controller
     // РЕНДЕРИНГ
     // =========================================================================
 
-    protected function render(string $viewName, array $data = []): void
+    protected function render(string $viewName, array $data = []): ViewResponse
     {
         $data['csrf_token'] = $this->request->getCsrfToken();
-        
-        // ✅ Объединяем с данными, которые предоставляет приложение (см. ниже)
         $data = array_merge($data, $this->getAppViewData());
 
         $calledClass = get_called_class();
@@ -95,9 +90,11 @@ abstract class Controller
         $viewFile = $this->viewFinder->find($viewName, $moduleName);
         $content = $this->view->render($viewFile, $data);
         $layoutFile = $this->viewFinder->findLayout($moduleName);
-        
+
         $data['content'] = $content;
-        echo $this->view->render($layoutFile, $data);
+        $finalHtml = $this->view->render($layoutFile, $data);
+
+        return new ViewResponse($finalHtml);
     }
 
     /**
@@ -113,19 +110,19 @@ abstract class Controller
     // ОТВЕТЫ И РЕДИРЕКТЫ
     // =========================================================================
 
-    protected function json(array $data, int $statusCode = 200): void
+    protected function json(array $data, int $statusCode = 200): JsonResponse
     {
-        throw new JsonResponseException($data, $statusCode);
+        return new JsonResponse($data, $statusCode);
     }
 
-    protected function redirect(string $url, int $code = 302): void
+    protected function redirect(string $url, int $code = 302): RedirectResponse
     {
-        throw new RedirectException($url, $code);
+        return new RedirectResponse($url, $code);
     }
 
-    protected function redirectBack(string $fallback = '/'): void
+    protected function redirectBack(string $fallback = '/'): RedirectResponse
     {
-        $this->redirect($this->getSafeBackUrl($fallback));
+        return $this->redirect($this->getSafeBackUrl($fallback));
     }
 
     private function getSafeBackUrl(string $fallback = '/'): string
@@ -139,7 +136,7 @@ abstract class Controller
         if (str_starts_with($url, '/') && !str_starts_with($url, '//')) {
             return true;
         }
-        
+
         $urlHost = parse_url($url, PHP_URL_HOST);
         if ($urlHost === null) {
             return false;
@@ -149,16 +146,17 @@ abstract class Controller
         return $urlHost === $appHost;
     }
 
-    protected function redirectWithMessage(string $url, string $message, string $type = 'success'): void
+
+    protected function redirectWithMessage(string $url, string $message, string $type = 'success'): \W3a\Core\Http\RedirectResponse
     {
         $session = $this->container->get(Session::class);
         $session->flash($type, $message);
-        $this->redirect($url);
+        return $this->redirect($url);
     }
 
-    protected function backWithMessage(string $message, string $type = 'success', string $fallback = '/'): void
+    protected function backWithMessage(string $message, string $type = 'success', string $fallback = '/'): \W3a\Core\Http\RedirectResponse
     {
-        $this->redirectWithMessage($this->getSafeBackUrl($fallback), $message, $type);
+        return $this->redirectWithMessage($this->getSafeBackUrl($fallback), $message, $type);
     }
 
     // =========================================================================
@@ -175,7 +173,7 @@ abstract class Controller
         if ($prefix === '') {
             $prefix = (new \ReflectionClass($this))->getShortName();
         }
-        
+
         try {
             $logger = $this->container->get(Logger::class);
             $logger->error("[{$prefix}] " . $e->getMessage(), [
