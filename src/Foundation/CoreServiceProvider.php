@@ -161,5 +161,51 @@ class CoreServiceProvider
                 $config->getInt('cache.database.ttl', 3600)
             );
         });
+		
+        // ═══════════════════════════════════════════
+        // 16. AUTH: Модели
+        // ═══════════════════════════════════════════
+        $container->singleton(\W3a\Core\Auth\Models\RememberToken::class, function ($container) {
+            return new \W3a\Core\Auth\Models\RememberToken(
+                $container->get(Database::class),
+                $container->get(Config::class)
+            );
+        });
+
+        $container->singleton(\W3a\Core\Auth\Models\EmailActivation::class, function ($container) {
+            return new \W3a\Core\Auth\Models\EmailActivation(
+                $container->get(Database::class),
+                $container->get(Config::class)
+            );
+        });
+
+        $container->singleton(\W3a\Core\Auth\Models\PasswordResetToken::class, function ($container) {
+            return new \W3a\Core\Auth\Models\PasswordResetToken(
+                $container->get(Database::class),
+                $container->get(Config::class)
+            );
+        });
+
+        // ═══════════════════════════════════════════
+        // 17. AUTH: UserIdProvider (реализация интерфейса)
+        // ═══════════════════════════════════════════
+        if (!$container->has(\W3a\Core\Contracts\UserIdProviderInterface::class)) {
+            $container->singleton(
+                \W3a\Core\Contracts\UserIdProviderInterface::class,
+                fn() => new \W3a\Core\Auth\UserIdProvider()
+            );
+        }
+		
+        // ═══════════════════════════════════════════
+        // 18. STORAGE: Менеджер дисков
+        // ═══════════════════════════════════════════
+        $container->singleton(\W3a\Core\Storage\StorageManager::class, function ($container) {
+            return new \W3a\Core\Storage\StorageManager($container->get(Config::class));
+        });
+
+        // Алиас для удобства: Storage::class → StorageManager
+        $container->singleton(\W3a\Core\Storage\Contracts\StorageInterface::class, function ($container) {
+            return $container->get(\W3a\Core\Storage\StorageManager::class)->disk();
+        });
     }
 }
