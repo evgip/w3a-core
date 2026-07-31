@@ -15,27 +15,15 @@ class Logger
      * Конструктор с инъекцией пути к файлу логов.
      * 
      * @param string|null $logFile Абсолютный путь к файлу логов. 
-     *                             Если null, будет предпринята попытка умного поиска корня проекта.
+     *                             Если null, используется путь по умолчанию внутри ядра.
      * @param string $dateFormat Формат даты для записей в логе
      */
     public function __construct(?string $logFile = null, string $dateFormat = 'Y-m-d H:i:s')
     {
+        // Если путь не передан, используем надежный fallback относительно ядра
         if ($logFile === null) {
-            // 🔥 УМНЫЙ ПОИСК КОРНЯ ПРОЕКТА
-            // Поднимаемся по дереву каталогов, пока не найдем папку, где есть 'vendor' и 'app'
-            $currentDir = dirname(__DIR__);
-            while ($currentDir !== dirname($currentDir)) {
-                if (is_dir($currentDir . '/vendor') && is_dir($currentDir . '/app')) {
-                    $logFile = $currentDir . '/storage/logs/app.log';
-                    break;
-                }
-                $currentDir = dirname($currentDir);
-            }
-            
-            // Fallback: если умный поиск не сработал (например, ядро используется изолированно)
-            if ($logFile === null) {
-                $logFile = dirname(__DIR__, 2) . '/storage/logs/app.log';
-            }
+            // dirname(__DIR__, 2) поднимет от src/Support/ до корня w3a-core
+            $logFile = dirname(__DIR__, 2) . '/storage/logs/app.log';
         }
 
         $this->logFile = $logFile;

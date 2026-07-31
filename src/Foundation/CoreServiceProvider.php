@@ -10,6 +10,7 @@ use W3a\Core\Http\Request;
 use W3a\Core\Http\Router;
 use W3a\Core\Http\Session;
 use W3a\Core\Database\Database;
+use W3a\Core\Contracts\DatabaseInterface;
 
 use W3a\Core\Support\Audit;
 use W3a\Core\Support\Logger;
@@ -46,6 +47,9 @@ class CoreServiceProvider
             // ИСПРАВЛЕНО: теперь читает файл database.php (ключ 'database' указывает на имя файла)
             return new Database($config->getArray('database', []));
         });
+
+        // Указываем контейнеру: когда просят DatabaseInterface, отдавай экземпляр Database
+        $container->singleton(DatabaseInterface::class, fn($c) => $c->get(Database::class));
 
         // 3. Session
         $container->singleton(Session::class, fn() => new Session());
