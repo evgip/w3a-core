@@ -7,10 +7,11 @@ namespace W3a\Core\Database;
 use InvalidArgumentException;
 use RuntimeException;
 use W3a\Core\Support\Logger;
+use W3a\Core\Contracts\DatabaseInterface; 
 
 abstract class Model
 {
-    protected Database $db;
+    protected DatabaseInterface $db;
     protected ?Logger $logger;
 
     protected string $table;
@@ -26,7 +27,7 @@ abstract class Model
     protected bool $qbIncludeTrashed = false;
 
     public function __construct(
-        Database $db,
+        DatabaseInterface $db,
         ?Logger $logger = null
     ) {
         $this->db = $db;
@@ -175,7 +176,12 @@ abstract class Model
      */
     protected function buildQuery(): array
     {
-        $columns = implode(', ', array_map(fn($col) => "`{$col}`", $this->qbSelect));
+		if ($this->qbSelect === ['*']) {
+			$columns = '*';
+		} else {
+			$columns = implode(', ', array_map(fn($col) => "`{$col}`", $this->qbSelect));
+		}
+
         $sql = "SELECT {$columns} FROM `{$this->table}`";
         $params = [];
 

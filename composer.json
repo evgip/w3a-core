@@ -17,5 +17,8 @@
             "src/Helpers/url.php",
             "src/Helpers/view.php"
         ]
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^11.5"
     }
 }
