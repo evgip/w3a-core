@@ -16,6 +16,7 @@ use W3a\Core\Foundation\Container;
 use W3a\Core\Foundation\Config;
 use W3a\Core\Support\Lang;
 use W3a\Core\Support\Logger;
+use W3a\Core\Support\MessageBag;
 
 /**
  * Базовый абстрактный контроллер для всех модулей.
@@ -78,6 +79,8 @@ abstract class Controller
     {
         $data['csrf_token'] = $this->request->getCsrfToken();
         $data = array_merge($data, $this->getAppViewData());
+
+        $data['errors'] = new MessageBag();
 
         $calledClass = get_called_class();
         $parts = explode('\\', $calledClass);
@@ -186,5 +189,33 @@ abstract class Controller
         } catch (\Throwable $logError) {
             error_log("[{$prefix}] " . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
         }
+    }
+	
+    /**
+     * Автоматическая валидация запроса.
+     * При ошибке: возвращает RedirectResponse или JsonResponse (для AJAX).
+     * При успехе: возвращает true.
+     * 
+     * ВАЖНО: В контроллере вызывайте через return, чтобы передать объект ответа в Router:
+     * return $this->validateRequest([...]);
+     */
+    protected function validateRequest(array $rules, array $messages = []): bool|\W3a\Core\Http\Response
+    {
+        $data = $this->request->getParams();
+        $validator = new \W3a\Core\Support\Validator($this->container->get(\W3a\Core\Contracts\DatabaseInterface::class));
+
+        if (!$validator->validate($data, $rules, $messages)) {
+            $errors = $validator->getErrors();
+
+            \W3a\Core\Support\MessageBag::flashErrors($errors, $data);
+
+            if ($this->request->wantsJson()) {
+                return $this->json(['success' => false, 'errors' => $errors], 422);
+            }
+
+            return $this->redirectBack();
+        }
+
+        return true;
     }
 }

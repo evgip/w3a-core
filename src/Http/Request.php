@@ -335,6 +335,18 @@ class Request
     }
 
     /**
+     * Проверяет, ожидает ли клиент ответ в формате JSON.
+     * Полезно для API-запросов и AJAX.
+     */
+    public function wantsJson(): bool
+    {
+        $accept = $this->header('HTTP_ACCEPT', '');
+        
+        // Проверяем заголовок Accept или то, что это AJAX-запрос
+        return str_contains((string)$accept, 'application/json') || $this->isAjaxRequest();
+    }
+
+    /**
      * Получить загруженный файл
      * 
      * @param string $key Имя поля файла

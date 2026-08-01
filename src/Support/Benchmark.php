@@ -7,10 +7,12 @@ use W3a\Core\Database\Database;
 class Benchmark
 {
     private static float $startTime;
+    private static int $startMemory;
 
     public static function start(): void
     {
         self::$startTime = microtime(true);
+        self::$startMemory = memory_get_usage(); 
     }
 
     public static function getExecutionTime(): float
@@ -21,8 +23,12 @@ class Benchmark
 
     public static function getMemoryUsage(): float
     {
-        $memory = memory_get_peak_usage(true);
-        return round($memory / 1024 / 1024, 2);
+        // Берем пиковое использование и вычитаем стартовое
+        $peakMemory = memory_get_peak_usage();
+        $delta = $peakMemory - self::$startMemory;
+        
+        // Переводим байты в мегабайты
+        return round($delta / 1024 / 1024, 2);
     }
 
     public static function getQueryCount(): int
