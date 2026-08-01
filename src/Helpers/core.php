@@ -97,3 +97,22 @@ if (!function_exists('old')) {
         return $_SESSION['_old_input'][$key] ?? (string)$default;
     }
 }
+
+// =========================================================================
+// COLLECTION HELPER
+// =========================================================================
+
+if (!function_exists('collect')) {
+    /**
+     * Создать новую коллекцию из переданных данных.
+     *
+     * @template TKey of array-key
+     * @template TValue
+     * @param iterable<TKey, TValue>|null $value
+     * @return \W3a\Core\Support\Collection<TKey, TValue>
+     */
+    function collect(iterable $value = null): \W3a\Core\Support\Collection
+    {
+        return new \W3a\Core\Support\Collection($value ?? []);
+    }
+}

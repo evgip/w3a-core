@@ -3,19 +3,21 @@
 [![PHP Version](https://img.shields.io/badge/php-%3E%3D8.1-8892BF.svg)](https://php.net)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Высокопроизводительное, модульное и полностью независимое ядро PHP-фреймворка. Реализует принципы чистой архитектуры: ядро не знает о бизнес-логике приложения, а все зависимости явно передаются через конфигурацию и DI-контейнер.
+Высокопроизводительное, модульное и строго типизированное ядро PHP-фреймворка. Реализует принципы чистой архитектуры и современные паттерны разработки (вдохновлено Laravel и Symfony), обеспечивая предсказуемость, тестируемость и отличный Developer Experience.
 
-## ✨ Особенности
+## ✨ Ключевые особенности
 
-- ⚡ **Ленивая загрузка конфигов:** Файлы читаются с диска только при первом обращении к их ключам (dot-нотация).
-- 🧩 **Чистая архитектура (DIP):** Ядро не содержит жестких ссылок на классы приложения (например, `\App\...`). Провайдеры регистрируются явно из точки входа.
-- 🚀 **Встроенный CLI:** Инструменты командной строки для управления приложением без HTTP-оверхеда.
-- 🛡️ **Безопасность:** Встроенная защита от CSRF, XSS (CSP), Rate Limiting и Firewall.
-- 📦 **Package Discovery:** Автоматическое обнаружение сервис-провайдеров из установленных Composer-пакетов.
+- 🎯 **Строгая типизация HTTP-ответов:** Контроллеры возвращают явные объекты `ViewResponse`, `RedirectResponse` или `JsonResponse`. Никаких скрытых `void` или побочных эффектов.
+- 📨 **Единый центр сообщений (MessageBag):** Централизованное управление flash-сообщениями и сохранением данных форм (`old_input`) без прямого манипулирования сессией в контроллерах.
+- 🛠 **Встроенные Коллекции (Collections):** Мощный fluent-интерфейс для работы с массивами данных (`collect()->map()->filter()->pluck()`), избавляющий от громоздких `array_*` функций.
+- ✅ **Декларативная валидация:** Встроенный класс `Validator` с поддержкой правил (`required`, `email`, `unique`, `min`, `regex` и др.) и автоматической обработкой ошибок через `validateRequest()`.
+- 🧩 **Чистая архитектура (DIP):** Ядро не содержит жестких ссылок на классы приложения (`\App\...`). Зависимости явно передаются через DI-контейнер и интерфейсы (Contracts).
+- 🛡️ **Безопасность из коробки:** Встроенная защита от CSRF, XSS (CSP-nonce), Rate Limiting и Firewall (бан IP).
+- ⚡ **Ленивая загрузка конфигов:** Файлы конфигурации читаются с диска только при первом обращении к их ключам через dot-нотацию.
 
 ## 📋 Требования
 
-- PHP 8.1+
+- PHP 8.1+ (используются union types, constructor property promotion, match expressions)
 - Расширения: `pdo`, `mbstring`, `json`
 - База данных: MySQL / MariaDB (или другая, поддерживаемая PDO)
 
@@ -45,7 +47,7 @@ composer require evgip/w3a-core
 
 ## 🚀 Быстрый старт
 
-Точка входа (`public/index.php`) теперь выглядит максимально чисто и явно declares зависимости:
+Точка входа (`public/index.php`) максимально чиста и явно объявляет зависимости:
 
 ```php
 <?php
@@ -57,13 +59,57 @@ require_once __DIR__ . '/../vendor/autoload.php';
 // 1. Загрузка переменных окружения
 \W3a\Core\Foundation\Env::load(dirname(__DIR__) . '/.env');
 
-// 2. Инициализация и запуск приложения с явной регистрацией провайдеров
+// 2. Инициализация приложения с явной регистрацией провайдеров
 $app = new \W3a\Core\Foundation\Application(dirname(__DIR__), [
     \W3a\Core\Foundation\CoreServiceProvider::class, // Сервисы ядра
     \App\AppServiceProvider::class,                  // Сервисы вашего приложения
 ]);
 
 $app->bootstrap()->run();
+```
+
+## 💡 Современный стиль кода (Примеры)
+
+### 1. Контроллеры с явными ответами и MessageBag
+Забудьте о `$this->session()->flash()` и скрытых редиректах в контроллерах приложения:
+
+```php
+public function store(): RedirectResponse
+{
+    $data = $this->request->getParams();
+    
+    // Автоматическая валидация с редиректом и сохранением old_input при ошибке
+    $validation = $this->validateRequest([
+        'email' => 'required|email|unique:users,email',
+        'password' => 'required|min:6',
+    ]);
+    
+    if ($validation !== true) {
+        return $validation; // Возвращаем RedirectResponse
+    }
+
+    try {
+        $this->userService->create($data);
+        MessageBag::flashMessage('success', 'Пользователь успешно создан!');
+        return $this->redirect('/users');
+    } catch (\Throwable $e) {
+        MessageBag::flashMessage('error', 'Ошибка при создании пользователя.');
+        return $this->redirectBack();
+    }
+}
+```
+
+### 2. Использование Коллекций (Collections)
+Замена громоздких `array_map` и `array_filter` на читаемый fluent-интерфейс:
+
+```php
+// Получаем уникальные ID активных историй из массива комментариев
+$storyIds = collect($comments)
+    ->reject(fn($c) => !empty($c['deleted_at']))
+    ->pluck('story_id')
+    ->unique()
+    ->values()
+    ->toArray();
 ```
 
 ## 📂 Структура приложения
@@ -73,19 +119,15 @@ your-app/
 ├── app/
 │   ├── Config/                 # Конфигурация (app.php, database.php, ...)
 │   ├── Lang/                   # Файлы локализации (ru.php, en.php)
-│   ├── Modules/                # Бизнес-модули (Users, Stories, Admin, ...)
-│   └── AppServiceProvider.php  # Связывание интерфейсов ядра с реализациями модулей
-├── bin/
-│   └── w3a                     # CLI-интерфейс ядра
+9   ├── Modules/                # Бизнес-модули (Users, Stories, Admin, ...)
+│   └── AppServiceProvider.php  # Связывание интерфейсов ядра с реализациями
 ├── storage/
 │   ├── cache/                  # Кэш маршрутов, представлений и провайдеров
 │   └── logs/                   # Логи приложения и PHP-ошибок
 ├── public/
-│   └── index.php               # Точка входа
+│   └── index.php               # Точка входа (Front Controller)
 └── composer.json
 ```
-
-*(Внутри самого пакета `w3a-core/src` код организован по доменам: `Foundation/`, `Http/`, `Database/`, `Security/`, `View/`, `Cache/` и т.д.)*
 
 ## 🔌 Ключевые интерфейсы (Contracts)
 
@@ -97,7 +139,7 @@ your-app/
 | `Contracts\UserIdProviderInterface` | Получение ID текущего авторизованного пользователя |
 | `Contracts\AuditStorageInterface` | Хранилище журнала аудита действий |
 | `Contracts\BannedIpRepositoryInterface` | Проверка заблокированных IP-адресов (Firewall) |
-| `Contracts\ErrorHandlerInterface` | Обработка и рендеринг страниц ошибок |
+| `Contracts\ErrorHandlerInterface` | Обработка и рендеринг страниц ошибок (404, 500) |
 
 ### Пример регистрации
 
@@ -114,7 +156,7 @@ class AppServiceProvider
 {
     public function register(Container $container): void
     {
-        // Ленивая регистрация через замыкание
+        // Ленивая регистрация через замыкание (singleton)
         $container->singleton(ErrorHandlerInterface::class, fn($c) => 
             new ErrorHandler($c)
         );
@@ -123,6 +165,7 @@ class AppServiceProvider
         $router = $container->get(\W3a\Core\Http\Router::class);
         $router->addMiddlewareGroup('auth', [
             \App\Modules\Users\Middleware\AuthMiddleware::class,
+            \App\Modules\Users\Middleware\BanCheckMiddleware::class,
         ]);
     }
 }
@@ -132,8 +175,8 @@ class AppServiceProvider
 
 Конфиги поддерживают **dot-нотацию** (`config('database.host')`) и загружаются **лениво** (файл `database.php` не будет прочитан, если вы обращаетесь только к `config('app.name')`).
 
-### `app/Config/app.php`
 ```php
+// app/Config/app.php
 return [
     'name' => 'my-app',
     'env' => \W3a\Core\Foundation\Env::get('APP_ENV', 'development'),
@@ -142,32 +185,18 @@ return [
 ];
 ```
 
-## 💻 CLI-интерфейс
-
-Ядро предоставляет консольные команды для управления приложением без инициализации HTTP-стека.
-
-```bash
-# Очистка всех кэшей (маршруты, представления, провайдеры)
-php bin/w3a cache:clear
-
-# Показать список доступных команд
-php bin/w3a help
-```
-
-## 🧩 Основные компоненты
+## 🧩 Основные компоненты ядра
 
 | Компонент | Неймспейс | Назначение |
 |-----------|-----------|-----------|
 | `Application` | `W3a\Core\Foundation` | Оркестратор: управление жизненным циклом (bootstrap) |
-| `Container` | `W3a\Core\Foundation` | DI-контейнер (поддержка `singleton`, `bind`, `instance`, авто-резолв через рефлексию) |
-| `ProviderRepository`| `W3a\Core\Foundation` | Сканирование и кэширование провайдеров (включая Package Discovery) |
-| `ExceptionHandler` | `W3a\Core\Exceptions` | Централизованная обработка и логирование всех типов исключений |
+| `Container` | `W3a\Core\Foundation` | DI-контейнер (поддержка `singleton`, `bind`, авто-резолв через рефлексию) |
+| `ExceptionHandler`| `W3a\Core\Exceptions` | Централизованная обработка ошибок (без использования исключений для управления потоком редиректов/JSON) |
 | `Router` | `W3a\Core\Http` | Маршрутизация с поддержкой middleware-групп |
-| `Config` | `W3a\Core\Foundation` | Управление конфигурацией с dot-нотацией и ленивой загрузкой |
-| `Database` / `Model`| `W3a\Core\Database` | Безопасная обёртка над PDO и абстрактная модель данных |
-| `FileCache` / `DatabaseCache` | `W3a\Core\Cache` | Гибкие механизмы кэширования с поддержкой TTL и тегов |
+| `MessageBag` | `W3a\Core\Support` | Управление flash-сообщениями и данными форм (`old_input`) |
+| `Collection` | `W3a\Core\Support` | Fluent-интерфейс для трансформации массивов данных |
+| `Validator` | `W3a\Core\Support` | Декларативная валидация входных данных с поддержкой БД (`unique`, `exists`) |
 
 ## 📄 Лицензия
 
 Распространяется под лицензией [MIT](LICENSE).
-
