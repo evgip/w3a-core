@@ -21,28 +21,15 @@ class ExceptionHandler
 
     public function handle(\Throwable $e): void
     {
-        // 1. Специфичные исключения фреймворка
-        if ($e instanceof RedirectException) {
-            http_response_code($e->statusCode);
-            header('Location: ' . $e->url);
-            exit;
-        }
-
-        if ($e instanceof JsonResponseException) {
-            http_response_code($e->getStatusCode());
-            header('Content-Type: application/json; charset=utf-8');
-            echo json_encode($e->getData(), JSON_UNESCAPED_UNICODE);
-            exit;
-        }
-
+        // 1. Специфичные исключения фреймворка (ТОЛЬКО ошибки)
         if ($e instanceof CsrfException) {
             $this->handleCsrf($e);
-            exit;
+            return; // Используем return вместо exit, чтобы позволить фреймворку корректно завершиться
         }
 
         if ($e instanceof HttpException) {
             $this->handleHttp($e);
-            exit;
+            return;
         }
 
         // 2. Глобальные ошибки (500)
@@ -91,7 +78,7 @@ class ExceptionHandler
         http_response_code(500);
 
         if ($isDev) {
-            echo '<div class="alert is-success"><h2>💥 Ошибка разработки:</h2>';
+            echo '<div class="alert is-danger"><h2>💥 Ошибка разработки:</h2>';
             echo '<strong>' . htmlspecialchars($e->getMessage()) . '</strong><br>';
             echo 'Файл: ' . htmlspecialchars($e->getFile()) . ' (строка ' . $e->getLine() . ')<br>';
             echo '<small>Стек вызовов записан в storage/logs/app.log</small></div>';

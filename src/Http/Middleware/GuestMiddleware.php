@@ -6,7 +6,7 @@ namespace W3a\Core\Http\Middleware;
 
 use W3a\Core\Http\Middleware\MiddlewareInterface;
 use W3a\Core\Contracts\UserIdProviderInterface;
-use W3a\Core\Exceptions\RedirectException;
+use W3a\Core\Http\RedirectResponse;
 
 /**
  * Middleware для гостей (неавторизованных пользователей).
@@ -34,7 +34,10 @@ class GuestMiddleware implements MiddlewareInterface
             // Делаем редирект ТОЛЬКО если пользователь НЕ находится на главной странице.
             // Это предотвращает бесконечный цикл редиректов (ERR_TOO_MANY_REDIRECTS).
             if ($currentUri !== '/' && $currentUri !== '/index.php') {
-                throw new RedirectException('/');
+                
+                // Возвращаем объект RedirectResponse вместо выбрасывания исключения.
+                // Это корректно прерывает цепочку middleware и отправляет редирект.
+                return new RedirectResponse('/');
             }
         }
         

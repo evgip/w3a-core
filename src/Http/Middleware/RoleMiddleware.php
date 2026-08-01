@@ -6,7 +6,7 @@ namespace W3a\Core\Http\Middleware;
 
 use W3a\Core\Foundation\Container;
 use W3a\Core\Contracts\UserIdProviderInterface;
-use W3a\Core\Exceptions\RedirectException;
+use W3a\Core\Http\RedirectResponse;
 use W3a\Core\Http\Session;
 
 /**
@@ -32,7 +32,9 @@ abstract class RoleMiddleware implements MiddlewareInterface
 
         if ($userId === null || (int)$userId <= 0) {
             $this->session->flash('error', 'Необходима авторизация');
-            throw new RedirectException('/login');
+            
+            // Возвращаем объект RedirectResponse
+            return new RedirectResponse('/login');
         }
 
         // Получаем роль пользователя (например, из сессии или через сервис)
@@ -44,7 +46,9 @@ abstract class RoleMiddleware implements MiddlewareInterface
 
         if (!$hasAccess) {
             $this->session->flash('error', 'У вас недостаточно прав для доступа к этой странице.');
-            throw new RedirectException('/'); // Или на страницу 403
+            
+            // Возвращаем объект RedirectResponse
+            return new RedirectResponse('/'); // Или на страницу 403, если она у вас есть
         }
 
         return $next();
