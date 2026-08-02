@@ -323,11 +323,49 @@ abstract class Model
         return $this->db->execute($sql, $data) > 0;
     }
 
-    public function delete(int|string $id): bool
+    /**
+     * Мягкое удаление записи (Soft Delete).
+     * Устанавливает текущую дату и время в поле deleted_at.
+     * Запись остается в базе данных, но исключается из обычных выборок.
+     * 
+     * Особенности:
+     * - Использует NOW() из SQL (время БД, а не PHP-сервера).
+     * - Проверяет deleted_at IS NULL, чтобы не перезаписать уже удаленные записи.
+     */
+    public function softDelete(int|string $id): bool
     {
-        return $this->update($id, ['deleted_at' => date('Y-m-d H:i:s')]);
+        $id = (int)$id;
+        
+        if ($id <= 0) {
+            return false;
+        }
+        
+        try {
+            $sql = "UPDATE `{$this->table}` 
+                    SET `deleted_at` = NOW() 
+                    WHERE `{$this->primaryKey}` = :id AND `deleted_at` IS NULL";
+            
+            $stmt = $this->db->prepare($sql);
+            $stmt->bindValue(':id', $id, \PDO::PARAM_INT);
+            $stmt->execute();
+            
+            return $stmt->rowCount() > 0;
+            
+        } catch (\Throwable $e) {
+            if ($this->logger !== null) {
+                $this->logger->error('Soft delete failed', [
+                    'table' => $this->table,
+                    'record_id' => $id,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+            return false;
+        }
     }
 
+    /**
+     * Восстановление мягко удаленной записи.
+     */
     public function restore(int|string $id): bool
     {
         return $this->update($id, ['deleted_at' => null]);
