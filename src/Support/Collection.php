@@ -196,6 +196,43 @@ class Collection implements ArrayAccess, Countable, IteratorAggregate
     // ПОИСК И ПРОВЕРКИ
     // =========================================================================
 
+	/**
+	 * Отфильтровать элементы по значению ключа (как в Laravel).
+	 * 
+	 * Поддерживает два формата вызова:
+	 * - where('role', 'admin')          — значение равно
+	 * - where('age', '>=', 18)          — с оператором сравнения
+	 *
+	 * @param string $key Ключ элемента
+	 * @param mixed $operator Оператор сравнения или значение (если передано 2 аргумента)
+	 * @param mixed $value Значение для сравнения (если передан оператор)
+	 */
+	public function where(string $key, mixed $operator = null, mixed $value = null): static
+	{
+		// Если передано 2 аргумента — второй это значение, оператор по умолчанию '='
+		if (func_num_args() === 2) {
+			$value = $operator;
+			$operator = '=';
+		}
+
+		return $this->filter(function ($item) use ($key, $operator, $value) {
+			// Поддержка и массивов, и объектов
+			$retrieved = is_object($item) ? ($item->$key ?? null) : ($item[$key] ?? null);
+
+			return match ($operator) {
+				'=', '==' => $retrieved == $value,
+				'==='    => $retrieved === $value,
+				'!=', '<>' => $retrieved != $value,
+				'!=='    => $retrieved !== $value,
+				'<'      => $retrieved < $value,
+				'>'      => $retrieved > $value,
+				'<='     => $retrieved <= $value,
+				'>='     => $retrieved >= $value,
+				default  => $retrieved == $value,
+			};
+		});
+	}
+
     /**
      * Получить первый элемент, удовлетворяющий условию.
      */

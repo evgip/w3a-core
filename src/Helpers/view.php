@@ -19,6 +19,20 @@ if (!function_exists('e')) {
     }
 }
 
+if (!function_exists('sanitize_html')) {
+    /**
+     * Быстрая очистка HTML с использованием пресета.
+     * 
+     * @param string $html Грязный HTML
+     * @param string $preset Пресет: 'article', 'comment', 'minimal', 'text_only'
+     */
+    function sanitize_html(string $html, string $preset = 'article'): string
+    {
+        return \W3a\Core\Support\HtmlSanitizer::sanitize($html, $preset);
+    }
+}
+
+
 /**
  * Получение локализованной строки перевода по ключу.
  *
