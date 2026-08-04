@@ -109,9 +109,9 @@ class Asset
     {
         // Используем getBasePath() вместо dirname(__DIR__, 2)
         $publicDir = self::getBasePath() . '/public';
-        self::$distCssFile      = $publicDir . '/css/app.min.css';
-        self::$distAdminCssFile = $publicDir . '/css/admin.min.css';
-        self::$distJsFile       = $publicDir . '/js/app.min.js';
+        self::$distCssFile      = $publicDir . '/assets/css/app.min.css';
+        self::$distAdminCssFile = $publicDir . '/assets/css/admin.min.css';
+        self::$distJsFile       = $publicDir . '/assets/js/app.min.js';
     }
 
     // =========================================================================
@@ -145,7 +145,7 @@ class Asset
             self::compileJsIfNeeded();
         }
         $version = file_exists(self::$distJsFile) ? filemtime(self::$distJsFile) : time();
-        return "/js/app.min.js?v=" . $version;
+        return "/assets/js/app.min.js?v=" . $version;
     }
 
     // =========================================================================
