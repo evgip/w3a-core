@@ -29,6 +29,10 @@ class Request
     /** @var Container|null DI-контейнер (внедряется через setContainer() или конструктор) */
     private ?Container $container = null;
 
+    /** @var string|null Кэш CSRF-токена в рамках одного запроса */
+    private ?string $cachedCsrfToken = null;
+
+
     /**
      * Конструктор с опциональными зависимостями
      * 
@@ -162,21 +166,34 @@ class Request
     /**
      * Получить или сгенерировать CSRF-токен (Double-Submit Cookie Pattern)
      * 
-     * Токен хранится ТОЛЬКО в cookie (доступен JS).
-     * Сессия не используется для CSRF.
+     * Токен кэшируется в рамках запроса, чтобы гарантировать,
+     * что все формы на странице получат одинаковый токен.
      */
     public function getCsrfToken(): string
     {
+        // 1. Возвращаем из кэша запроса (если уже генерировали)
+        if ($this->cachedCsrfToken !== null) {
+            return $this->cachedCsrfToken;
+        }
+
+        // 2. Пытаемся взять из cookie
         $token = $_COOKIE[self::CSRF_COOKIE_NAME] ?? null;
 
+        // 3. Если cookie нет, генерируем новый
         if (!$token) {
             $token = bin2hex(random_bytes(32));
             $this->setCsrfCookie($token);
+            
+            // ВАЖНО: Обновляем $_COOKIE для текущего запроса
+            $_COOKIE[self::CSRF_COOKIE_NAME] = $token;
         }
 
+        // 4. Сохраняем в кэш запроса
+        $this->cachedCsrfToken = $token;
+        
         return $token;
     }
-
+	
     /**
      * HTML-поле с токеном для вставки в формы
      */
@@ -195,31 +212,33 @@ class Request
      * 
      * Сессия не используется.
      */
-    public function validateCsrf(): void
-    {
-        // GET-запросы не требуют CSRF
-        if ($this->isGet()) {
-            return;
-        }
+	public function validateCsrf(): void
+	{
+		// GET-запросы не требуют CSRF
+		if ($this->isGet()) {
+			return;
+		}
 
-        // 1. Получаем токен из cookie
-        $cookieToken = $_COOKIE[self::CSRF_COOKIE_NAME] ?? '';
+		// 1. Получаем токен из cookie
+		$cookieToken = $_COOKIE[self::CSRF_COOKIE_NAME] ?? '';
 
-        // 2. Получаем токен из запроса (заголовок или POST-параметр)
-        $requestToken = $this->getCsrfTokenFromRequest();
+		// 2. Получаем токен из запроса (заголовок или POST-параметр)
+		$requestToken = $this->getCsrfTokenFromRequest();
 
-        // 3. Double-submit проверка: cookie == запрос
-        if (
-            empty($cookieToken) || empty($requestToken) ||
-            !hash_equals((string)$cookieToken, (string)$requestToken)
-        ) {
-            $this->handleCsrfFailure();
-            return;
-        }
+		// 3. Double-submit проверка: cookie == запрос
+		if (
+			empty($cookieToken) || empty($requestToken) ||
+			!hash_equals((string)$cookieToken, (string)$requestToken)
+		) {
+			$this->handleCsrfFailure();
+			return;
+		}
 
-        // 4. Ротация токена после успешной проверки
-        $this->regenerateCsrfToken();
-    }
+		// 4. УБРАНО: Ротация токена после успешной проверки
+		// Double-Submit Cookie Pattern не требует одноразовости токена
+		// Токен живёт 7 дней и защищён SameSite=Lax
+		// $this->regenerateCsrfToken(); // ← Закомментировано
+	}
 
     /**
      * Валидация CSRF без редиректа (для AJAX-запросов)
@@ -273,7 +292,7 @@ class Request
             'path' => '/',
             'secure' => $this->isSecure(),
             'httponly' => false,  // JS должен читать cookie
-            'samesite' => 'Strict' // Защита от CSRF
+            'samesite' => 'Lax' // ← Изменено с Strict на Lax
         ]);
     }
 
