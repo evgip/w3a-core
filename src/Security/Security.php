@@ -4,28 +4,25 @@ declare(strict_types=1);
 
 namespace W3a\Core\Security;
 
+use W3a\Core\Foundation\Config;
 use W3a\Core\Support\Logger;
 
 /**
  * Сервис безопасности: nonce для CSP и заголовки безопасности.
- * 
- * Отвечает за:
- * - Генерацию nonce для Content Security Policy
- * - Отправку HTTP-заголовков безопасности
- * 
- * НЕ отвечает за CSRF (это делает Request.php)
  */
 class Security
 {
     private ?string $nonce = null;
     private Logger $logger;
+    private Config $config;
 
     /**
-     * Конструктор с инъекцией Logger
+     * Конструктор с инъекцией Logger и Config
      */
-    public function __construct(Logger $logger)
+    public function __construct(Logger $logger, Config $config)
     {
         $this->logger = $logger;
+        $this->config = $config;
     }
 
     /**
@@ -51,8 +48,9 @@ class Security
 
         $nonce = $this->getNonce();
 
-        $configFile = dirname(__DIR__) . '/Config/csp.php';
-        $cspConfig = file_exists($configFile) ? require $configFile : [];
+        // ✅ Читаем конфиг через Config (а не через dirname!)
+        // Файл config/csp.php автоматически загружается системой конфигов
+        $cspConfig = $this->config->getArray('csp', []);
 
         $mergeOrigins = function (string $key, array $defaults = []) use ($cspConfig): string {
             $configured = $cspConfig[$key] ?? [];

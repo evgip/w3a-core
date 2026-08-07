@@ -119,9 +119,12 @@ class CoreServiceProvider
         });
 
         // 11. Security
-        $container->singleton(Security::class, function ($container) {
-            return new Security($container->get(Logger::class));
-        });
+		$container->singleton(Security::class, function ($container) {
+			return new Security(
+				$container->get(Logger::class),
+				$container->get(Config::class)   // ← добавили
+			);
+		});
 
         // 12. Container (сам себя)
         $container->instance(Container::class, $container);
