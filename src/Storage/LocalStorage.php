@@ -280,4 +280,19 @@ class LocalStorage implements StorageInterface
 
         return rmdir($directory);
     }
+	
+	/**
+	 * Получить относительный путь от полного абсолютного пути.
+	 */
+	public function relativePath(string $absolutePath): string
+	{
+		$absolutePath = str_replace('\\', '/', $absolutePath);
+		$root = str_replace('\\', '/', $this->root);
+		
+		if (str_starts_with($absolutePath, $root)) {
+			return ltrim(substr($absolutePath, strlen($root)), '/');
+		}
+		
+		return basename($absolutePath);
+	}
 }
