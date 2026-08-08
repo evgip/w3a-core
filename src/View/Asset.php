@@ -125,7 +125,7 @@ class Asset
             self::compileCssIfNeeded();
         }
         $version = file_exists(self::$distCssFile) ? filemtime(self::$distCssFile) : time();
-        return "/css/app.min.css?v=" . $version;
+        return "/assets/css/app.min.css?v=" . $version;
     }
 
     public static function adminCss(): string
@@ -135,7 +135,7 @@ class Asset
             self::compileCssIfNeeded();
         }
         $version = file_exists(self::$distAdminCssFile) ? filemtime(self::$distAdminCssFile) : time();
-        return "/css/admin.min.css?v=" . $version;
+        return "/assets/css/admin.min.css?v=" . $version;
     }
 
     public static function js(): string
