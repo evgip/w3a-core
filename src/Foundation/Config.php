@@ -244,26 +244,32 @@ class Config
      * @param string $moduleName Имя модуля (для логирования/отладки)
      * @param string $moduleConfigPath Путь к папке конфигов модуля
      */
-    public function addModulePath(string $moduleName, string $moduleConfigPath): void
-    {
-        $files = glob($moduleConfigPath . '/*.php');
-        
-        foreach ($files as $file) {
-            $fileName = basename($file, '.php');
-            $moduleData = require $file;
-            
-            // Если базовый конфиг еще не загружен, инициализируем пустым массивом
-            if (!array_key_exists($fileName, $this->settings)) {
-                $this->settings[$fileName] = [];
-            }
-            
-            // 🔥 Рекурсивное слияние: настройки модуля имеют приоритет
-            $this->settings[$fileName] = array_replace_recursive(
-                $this->settings[$fileName],
-                $moduleData
-            );
-        }
-    }
+	public function addModulePath(string $moduleName, string $moduleConfigPath): void
+	{
+		$files = glob($moduleConfigPath . '/*.php');
+		
+		foreach ($files as $file) {
+			$fileName = basename($file, '.php');
+			$moduleData = require $file;
+			
+			// 🔥 FIX: Если файл еще не загружен, сначала загружаем базовый конфиг с диска
+			if (!array_key_exists($fileName, $this->settings)) {
+				$coreFilePath = $this->coreConfigPath !== '' ? $this->coreConfigPath . '/' . $fileName . '.php' : '';
+				$appFilePath = $this->configPath . '/' . $fileName . '.php';
+				
+				$coreData = ($coreFilePath !== '' && file_exists($coreFilePath)) ? require $coreFilePath : [];
+				$appData = file_exists($appFilePath) ? require $appFilePath : [];
+
+				$this->settings[$fileName] = array_replace_recursive($coreData, $appData);
+			}
+			
+			// Рекурсивное слияние: настройки модуля имеют приоритет
+			$this->settings[$fileName] = array_replace_recursive(
+				$this->settings[$fileName],
+				$moduleData
+			);
+		}
+	}
 
     /**
      * Рекурсивный поиск значения в массиве по строке с точками.

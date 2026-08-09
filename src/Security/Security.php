@@ -61,6 +61,10 @@ class Security
         $policy = [
             "default-src 'self' " . $mergeOrigins('default_src'),
             "script-src 'self' 'nonce-{$nonce}' 'unsafe-eval' " . $mergeOrigins('script_src'),
+			
+			"script-src-elem 'self' 'nonce-{$nonce}' 'unsafe-eval' 'unsafe-inline' " . $mergeOrigins('script_src'),
+			"script-src-attr 'self' 'nonce-{$nonce}' 'unsafe-inline' " . $mergeOrigins('script_src'), 
+			
             "style-src-elem 'self' 'unsafe-inline' " . $mergeOrigins('style_src'),
             "style-src-attr 'self'",
             "frame-src 'self' " . $mergeOrigins('frame_src'),
