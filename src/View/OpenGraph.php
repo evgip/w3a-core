@@ -26,16 +26,21 @@ class OpenGraph
     /**
      * Установить основные OG-данные
      */
-    public static function set(array $data): void
-    {
-        foreach ($data as $key => $value) {
-            if (array_key_exists($key, self::$data)) {
-                self::$data[$key] = $value;
-            } else {
-                self::$extra[$key] = $value;
-            }
-        }
-    }
+	public static function set(array $data): void
+	{
+		foreach ($data as $key => $value) {
+			// Автоматическая обработка description
+			if ($key === 'description' && is_string($value) && function_exists('text_excerpt')) {
+				$value = text_excerpt($value, 250);
+			}
+			
+			if (array_key_exists($key, self::$data)) {
+				self::$data[$key] = $value;
+			} else {
+				self::$extra[$key] = $value;
+			}
+		}
+	}
 
     /**
      * Установить отдельное свойство
@@ -77,45 +82,50 @@ class OpenGraph
     /**
      * Сгенерировать HTML мета-тегов
      */
-    public static function render(): string
-    {
-        $tags = [];
+	public static function render(): string
+	{
+		$tags = [];
 
-        // Заполняем site_name по умолчанию из конфига
-        if (empty(self::$data['site_name'])) {
-            self::$data['site_name'] = config('app.name', 'W3a', 'string');
-        }
+		// Заполняем site_name по умолчанию из конфига
+		if (empty(self::$data['site_name'])) {
+			self::$data['site_name'] = config('app.name', 'W3a', 'string');
+		}
 
-        // 1. Сначала добавляем стандартный meta description, если он задан
-        if (!empty(self::$data['description'])) {
-            $tags[] = sprintf(
-                '<meta name="description" content="%s">',
-                e((string) self::$data['description'])
-            );
-        }
+		// 1. Сначала добавляем стандартный meta description, если он задан
+		if (!empty(self::$data['description'])) {
+			$tags[] = sprintf(
+				'<meta name="description" content="%s">',
+				e((string) self::$data['description'])
+			);
+		}
 
-        // 2. Затем добавляем все Open Graph теги (включая og:description)
-        foreach (self::$data as $key => $value) {
-            if ($value !== null && $value !== '') {
-                $tags[] = sprintf(
-                    '<meta property="og:%s" content="%s">',
-                    e($key),
-                    e((string) $value)
-                );
-            }
-        }
+		// 2. Затем добавляем все Open Graph теги (включая og:description)
+		foreach (self::$data as $key => $value) {
+			if ($value !== null && $value !== '') {
+				// Дополнительная защита: убираем переносы строк для title и description
+				if (in_array($key, ['title', 'description'], true)) {
+					$value = preg_replace('/\s+/', ' ', (string) $value);
+				}
+				
+				$tags[] = sprintf(
+					'<meta property="og:%s" content="%s">',
+					e($key),
+					e((string) $value)
+				);
+			}
+		}
 
-        // 3. Дополнительные кастомные теги
-        foreach (self::$extra as $key => $value) {
-            if ($value !== null && $value !== '') {
-                $tags[] = sprintf(
-                    '<meta property="%s" content="%s">',
-                    e($key),
-                    e((string) $value)
-                );
-            }
-        }
+		// 3. Дополнительные кастомные теги
+		foreach (self::$extra as $key => $value) {
+			if ($value !== null && $value !== '') {
+				$tags[] = sprintf(
+					'<meta property="%s" content="%s">',
+					e($key),
+					e((string) $value)
+				);
+			}
+		}
 
-        return implode("\n    ", $tags);
-    }
+		return implode("\n    ", $tags);
+	}
 }

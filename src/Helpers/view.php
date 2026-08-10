@@ -156,3 +156,53 @@ if (!function_exists('csp_nonce')) {
         return $nonce;
     }
 }
+
+
+
+/**
+ * Сформировать краткое описание (excerpt) из текста.
+ * 
+ * - Убирает HTML-теги
+ * - Нормализует пробелы и переносы строк
+ * - Обрезает до указанной длины на границе слова
+ * - Добавляет многоточие если обрезано
+ *
+ * @param string $text Исходный текст
+ * @param int $maxLength Максимальная длина (по умолчанию 200 символов)
+ * @param string $suffix Суффикс при обрезке (по умолчанию '...')
+ * @return string
+ */
+ if (!function_exists('text_excerpt')) {
+	function text_excerpt(string $text, int $maxLength = 200, string $suffix = '...'): string
+	{
+		// 1. Убираем HTML-теги
+		$text = strip_tags($text);
+		
+		// 2. Декодируем HTML-сущности
+		$text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+		
+		// 3. Нормализуем пробелы (заменяем переносы строк, табы, множественные пробелы на один пробел)
+		$text = preg_replace('/\s+/', ' ', $text);
+		
+		// 4. Trim
+		$text = trim($text);
+		
+		// 5. Если текст короче лимита — возвращаем как есть
+		if (mb_strlen($text) <= $maxLength) {
+			return $text;
+		}
+		
+		// 6. Обрезаем до ближайшего пробела перед лимитом
+		$truncated = mb_substr($text, 0, $maxLength);
+		$lastSpace = mb_strrpos($truncated, ' ');
+		
+		if ($lastSpace !== false && $lastSpace > $maxLength * 0.7) {
+			$truncated = mb_substr($truncated, 0, $lastSpace);
+		}
+		
+		// 7. Убираем trailing punctuation (чтобы не было "...,")
+		$truncated = rtrim($truncated, '.,;:!?');
+		
+		return $truncated . $suffix;
+	}
+}
