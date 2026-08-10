@@ -67,6 +67,11 @@ class Validator
      */
     protected function checkRule(string $field, mixed $value, string $ruleName, ?string $param = null): void
     {
+		// Пустое правило = поле нужно для фильтрации, но не для валидации
+		if ($ruleName === '') {
+			return;
+		}
+
         // Если значение пустое и правило не 'required', пропускаем проверку (значение необязательно)
         $isEmpty = ($value === '' || $value === null || (is_array($value) && empty($value)));
         if ($isEmpty && $ruleName !== 'required') {
