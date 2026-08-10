@@ -218,4 +218,69 @@ abstract class Controller
 
         return true;
     }
+	
+	/**
+	 * Валидировать запрос через FormRequest.
+	 * 
+	 * Автоматически выполняет:
+	 * - Проверку авторизации (authorize())
+	 * - Фильтрацию полей (fillable())
+	 * - Валидацию данных (rules())
+	 * 
+	 * При ошибке: возвращает RedirectResponse или JsonResponse (для AJAX).
+	 * При успехе: возвращает массив валидированных данных.
+	 * 
+	 * ВАЖНО: В контроллере вызывайте через return, чтобы передать объект ответа в Router:
+	 * return $this->validateForm(new RegisterUserRequest($this->request));
+	 * 
+	 * @param FormRequest $formRequest
+	 * @return array|Response Массив валидированных данных или Response с ошибками
+	 */
+	protected function validateForm(FormRequest $formRequest): array|Response
+	{
+		try {
+			// Автоматическая валидация (включая authorize() и fillable())
+			$formRequest->validate();
+			
+			// Возвращаем отфильтрованные и валидированные данные
+			return $formRequest->validated();
+			
+		} catch (\W3a\Core\Exceptions\ValidationException $e) {
+			$errors = $e->getErrors();
+			
+			// Flash ошибки в сессию для обычных форм
+			if (!empty($errors)) {
+				\W3a\Core\Support\MessageBag::flashErrors($errors, $this->request->getParams());
+			}
+			
+			// Для AJAX возвращаем JSON
+			if ($this->request->wantsJson()) {
+				$responseData = [
+					'success' => false,
+					'message' => $e->getMessage(),
+				];
+				
+				if (!empty($errors)) {
+					$responseData['errors'] = $errors;
+				}
+				
+				return $this->json($responseData, $e->getCode());
+			}
+			
+			// Для обычных форм — редирект назад
+			return $this->redirectBack();
+			
+		} catch (\RuntimeException $e) {
+			// Ошибка авторизации (authorize() вернул false)
+			if ($this->request->wantsJson()) {
+				return $this->json([
+					'success' => false,
+					'message' => 'Unauthorized'
+				], 403);
+			}
+			
+			// Для обычных форм можно редиректить на страницу ошибки или главную
+			return $this->redirect('/');
+		}
+	}
 }

@@ -77,14 +77,15 @@ class FileValidator
      *
      * @throws ValidationException
      */
-    public function validateOrFail(UploadedFile $file): void
-    {
-        if (!$this->validate($file)) {
-            throw new ValidationException(
-                'Ошибка валидации файла: ' . implode('; ', $this->errors)
-            );
-        }
-    }
+	public function validateOrFail(UploadedFile $file): void
+	{
+		if (!$this->validate($file)) {
+			throw new ValidationException(
+				'Ошибка валидации файла: ' . implode('; ', $this->errors),
+				['file' => $this->errors]  // ← Передаём ошибки структурированно
+			);
+		}
+	}
 
     /**
      * Проверка MIME-типа через finfo (по реальному содержимому файла).

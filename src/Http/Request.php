@@ -443,4 +443,82 @@ class Request
     {
         return $_SERVER['HTTP_USER_AGENT'] ?? '';
     }
+	
+	/**
+	 * Получить только указанные ключи из запроса.
+	 * 
+	 * Используется для защиты от Mass Assignment на уровне контроллера
+	 * и получения чистого набора данных для передачи в сервисы/валидатор.
+	 * 
+	 * Примеры использования:
+	 *   $data = $request->only(['email', 'password']);         // из всех источников (GET+POST+JSON)
+	 *   $data = $request->only(['email', 'password'], 'post'); // только из POST
+	 *   $data = $request->only(['page', 'limit'], 'query');    // только из GET (query-string)
+	 * 
+	 * @param array  $keys   Массив разрешённых ключей
+	 * @param string $source Источник данных: 'input' (GET+POST+JSON), 'query' (только GET), 'post' (только POST)
+	 * @return array Массив, содержащий только указанные ключи (отсутствующие ключи игнорируются)
+	 */
+	public function only(array $keys, string $source = 'input'): array
+	{
+		$data = match ($source) {
+			'query' => $this->query(),
+			'post'  => $this->post(),
+			default => $this->input(),
+		};
+
+		return array_intersect_key($data, array_flip($keys));
+	}
+
+	/**
+	 * Получить все данные запроса, кроме указанных ключей.
+	 * 
+	 * Полезно, когда нужно отбросить служебные поля (например, `csrf_token`, `_method`)
+	 * перед передачей данных в сервис.
+	 * 
+	 * Примеры использования:
+	 *   $data = $request->except(['csrf_token', '_method']);         // из всех источников
+	 *   $data = $request->except(['debug', 'api_key'], 'post');      // только из POST
+	 *   $data = $request->except(['utm_source', 'utm_medium'], 'query'); // только из GET
+	 * 
+	 * @param array  $keys   Массив ключей, которые нужно исключить
+	 * @param string $source Источник данных: 'input' (GET+POST+JSON), 'query' (только GET), 'post' (только POST)
+	 * @return array Массив без исключённых ключей
+	 */
+	public function except(array $keys, string $source = 'input'): array
+	{
+		$data = match ($source) {
+			'query' => $this->query(),
+			'post'  => $this->post(),
+			default => $this->input(),
+		};
+
+		return array_diff_key($data, array_flip($keys));
+	}
+
+	/**
+	 * Проверить наличие всех указанных ключей в запросе.
+	 * 
+	 * Полезно для быстрой проверки обязательности полей перед валидацией.
+	 * 
+	 * @param array  $keys   Массив ключей для проверки
+	 * @param string $source Источник данных: 'input' (GET+POST+JSON), 'query' (только GET), 'post' (только POST)
+	 * @return bool
+	 */
+	public function has(array $keys, string $source = 'input'): bool
+	{
+		$data = match ($source) {
+			'query' => $this->query(),
+			'post'  => $this->post(),
+			default => $this->input(),
+		};
+
+		foreach ($keys as $key) {
+			if (!array_key_exists($key, $data)) {
+				return false;
+			}
+		}
+
+		return true;
+	}
 }

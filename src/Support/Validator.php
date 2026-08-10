@@ -108,6 +108,11 @@ class Validator
             case 'unique':
                 $isValid = $this->checkUnique($field, (string)$value, $param);
                 break;
+				
+			case 'in':
+				$allowed = explode(',', (string)$param);
+				$isValid = in_array((string)$value, $allowed, true);
+				break;	
                 
             case 'exists': // Бонус: обратное правило для unique
                 $isValid = $this->checkExists($field, (string)$value, $param);
@@ -225,6 +230,7 @@ class Validator
             'match' => "Поле '{$field}' должно совпадать с полем '{$param}'.",
             'regex' => "Поле '{$field}' имеет недопустимый формат.",
             'unique' => "Такое значение ':value' уже существует в системе.",
+			'in' => "Поле '{$field}' должно быть одним из: :param.",
             'exists' => "Такое значение ':value' не найдено в системе.",
             'integer', 'numeric' => "Поле '{$field}' должно быть числом.",
             default => "Поле '{$field}' не прошло валидацию.",
