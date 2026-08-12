@@ -24,7 +24,7 @@ class HtmlSanitizer
         // Полный набор для статей (Editor.js)
         'article' => [
             'p', 'br', 'strong', 'em', 'b', 'i', 'u', 's', 'mark', 'sub', 'sup',
-            'a', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li',
+            'a', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'footer',
             'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
             'figure', 'img', 'figcaption',
         ],
