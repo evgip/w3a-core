@@ -65,4 +65,14 @@ class RateLimiter
         $userAgent = $this->request->getUserAgent() ?? '';
         return 'fingerprint:' . hash('sha256', $ip . '|' . $userAgent);
     }
+	
+	/**
+	 * Отправить HTTP 429 и прервать выполнение.
+	 */
+	public function block(): never
+	{
+		http_response_code(429);
+		header('Content-Type: text/plain; charset=UTF-8');
+		exit('429 Too Many Requests. Превышен лимит частоты запросов.');
+	}
 }
