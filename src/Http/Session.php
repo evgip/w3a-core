@@ -7,11 +7,16 @@ namespace W3a\Core\Http;
 use RuntimeException;
 
 /**
- * Сервис для безопасного управления сессиями PHP.
+ * Сервис для безопасного управления сессиями PHP с ЛЕНИВОЙ инициализацией.
  * 
- * Предоставляет объектно-ориентированный интерфейс для работы с $_SESSION,
- * включая поддержку flash-сообщений (данные, доступные только для следующего запроса)
- * и защиту от атак фиксирования сессии (Session Fixation).
+ * КЛЮЧЕВЫЕ ОСОБЕННОСТИ:
+ * - session_start() НЕ вызывается в конструкторе
+ * - Сессия стартует ТОЛЬКО при первом обращении к $_SESSION (get/set/flash)
+ * - Для анонимных GET-запросов сессия вообще не открывается — нет cookie, нет файлов
+ * - Сохраняет все функции: flash-сообщения, защита от Session Fixation
+ * 
+ * ЭКОНОМИЯ: На публичном сайте 90%+ запросов — это GET без авторизации.
+ * Эти запросы больше не создают session-файлы и не шлют PHPSESSID cookie ботам.
  */
 class Session
 {
@@ -21,39 +26,37 @@ class Session
     private bool $started = false;
 
     /**
-     * Конструктор. Автоматически запускает сессию при создании экземпляра.
+     * Конструктор. НЕ стартует сессию автоматически.
+     * 
+     * session_start() вызывается лениво — только когда реально нужны данные сессии.
+     * Это позволяет избежать создания сессии для анонимных GET-запросов.
      */
     public function __construct()
     {
-        $this->start();
+        // Намеренно пусто: ленивая инициализация
     }
 
     /**
-     * Запуск сессии с защитой от повторного запуска.
+     * Явный запуск сессии.
      * 
-     * Проверяет текущий статус сессии и запускает её только если она ещё не активна.
+     * Обычно не нужно вызывать напрямую — методы get/set/flash
+     * автоматически вызывают ensureStarted().
      * 
      * @throws RuntimeException Если не удалось запустить сессию
      */
     public function start(): void
     {
-        if ($this->started) {
-            return;
-        }
+        $this->ensureStarted();
+    }
 
-        // Если сессия уже активна (запущена глобально или другим экземпляром)
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            $this->started = true;
-            return;
-        }
-
-        // Если сессия не запущена, пытаемся её запустить
-        if (session_status() === PHP_SESSION_NONE) {
-            if (!session_start()) {
-                throw new RuntimeException('Не удалось запустить сессию (Failed to start session)');
-            }
-            $this->started = true;
-        }
+    /**
+     * Проверить, была ли сессия реально запущена.
+     * 
+     * Полезно для middleware, который хочет узнать состояние без принудительного старта.
+     */
+    public function isStarted(): bool
+    {
+        return $this->started || session_status() === PHP_SESSION_ACTIVE;
     }
 
     /**
@@ -65,6 +68,7 @@ class Session
      */
     public function get(string $key, mixed $default = null): mixed
     {
+        $this->ensureStarted();
         return $_SESSION[$key] ?? $default;
     }
 
@@ -76,6 +80,7 @@ class Session
      */
     public function set(string $key, mixed $value): void
     {
+        $this->ensureStarted();
         $_SESSION[$key] = $value;
     }
 
@@ -87,6 +92,7 @@ class Session
      */
     public function has(string $key): bool
     {
+        $this->ensureStarted();
         return isset($_SESSION[$key]);
     }
 
@@ -97,6 +103,7 @@ class Session
      */
     public function delete(string $key): void
     {
+        $this->ensureStarted();
         unset($_SESSION[$key]);
     }
 
@@ -117,6 +124,7 @@ class Session
      */
     public function all(): array
     {
+        $this->ensureStarted();
         return $_SESSION ?? [];
     }
 
@@ -125,6 +133,7 @@ class Session
      */
     public function clear(): void
     {
+        $this->ensureStarted();
         $_SESSION = [];
     }
 
@@ -136,6 +145,13 @@ class Session
      */
     public function destroy(): void
     {
+        if (!$this->isStarted()) {
+            // Если сессия ещё не начиналась, уничтожать нечего
+            $this->started = false;
+            $_SESSION = [];
+            return;
+        }
+
         if (session_status() === PHP_SESSION_ACTIVE) {
             // Удаляем cookie сессии на стороне клиента
             if (ini_get("session.use_cookies")) {
@@ -172,6 +188,7 @@ class Session
      */
     public function flash(string $key, mixed $message): void
     {
+        $this->ensureStarted();
         $_SESSION['flash'][$key] = $message;
     }
 
@@ -183,6 +200,7 @@ class Session
      */
     public function hasFlash(string $key): bool
     {
+        $this->ensureStarted();
         return isset($_SESSION['flash'][$key]);
     }
 
@@ -194,6 +212,8 @@ class Session
      */
     public function getFlash(string $key): mixed
     {
+        $this->ensureStarted();
+        
         if (isset($_SESSION['flash'][$key])) {
             $message = $_SESSION['flash'][$key];
             unset($_SESSION['flash'][$key]); // Удаляем после прочтения
@@ -209,6 +229,7 @@ class Session
      */
     public function allFlashes(): array
     {
+        $this->ensureStarted();
         $flashes = $_SESSION['flash'] ?? [];
         unset($_SESSION['flash']); // Очищаем весь блок flash после чтения
         return $flashes;
@@ -216,11 +237,16 @@ class Session
 
     /**
      * Получить текущий идентификатор сессии (Session ID).
+     * 
+     * Если сессия не была запущена, возвращает пустую строку (без принудительного старта).
      *
-     * @return string Текущий Session ID
+     * @return string Текущий Session ID или пустая строка
      */
     public function id(): string
     {
+        if (!$this->isStarted()) {
+            return '';
+        }
         return session_id();
     }
 
@@ -236,6 +262,7 @@ class Session
      */
     public function regenerate(bool $deleteOldSession = true): bool
     {
+        $this->ensureStarted();
         return session_regenerate_id($deleteOldSession);
     }
 
@@ -246,6 +273,35 @@ class Session
      */
     public function name(): string
     {
+        // session_name() работает без активной сессии
         return session_name();
+    }
+
+    /**
+     * Внутренний метод: ленивый запуск сессии.
+     * 
+     * Вызывается автоматически при любом обращении к данным сессии.
+     * 
+     * @throws RuntimeException Если не удалось запустить сессию
+     */
+    private function ensureStarted(): void
+    {
+        if ($this->started) {
+            return;
+        }
+
+        // Если сессия уже активна (запущена глобально или другим экземпляром)
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            $this->started = true;
+            return;
+        }
+
+        // Если сессия не запущена, пытаемся её запустить
+        if (session_status() === PHP_SESSION_NONE) {
+            if (!session_start()) {
+                throw new RuntimeException('Не удалось запустить сессию (Failed to start session)');
+            }
+            $this->started = true;
+        }
     }
 }
