@@ -6,6 +6,7 @@ namespace W3a\Core\Security;
 
 use W3a\Core\Foundation\Config;
 use W3a\Core\Support\Logger;
+use W3a\Core\Http\Request;
 
 /**
  * Сервис безопасности: nonce для CSP и заголовки безопасности.
@@ -15,14 +16,19 @@ class Security
     private ?string $nonce = null;
     private Logger $logger;
     private Config $config;
+    private ?Request $request;
 
     /**
-     * Конструктор с инъекцией Logger и Config
+     * Конструктор с инъекцией Logger, Config и Request.
+     *
+     * @param Request|null $request Нужен для маршрутозависимого CSP
+     *                              (unsafe-eval только на страницах редактора).
      */
-    public function __construct(Logger $logger, Config $config)
+    public function __construct(Logger $logger, Config $config, ?Request $request = null)
     {
         $this->logger = $logger;
         $this->config = $config;
+        $this->request = $request;
     }
 
     /**
@@ -34,6 +40,24 @@ class Security
             $this->nonce = bin2hex(random_bytes(16));
         }
         return $this->nonce;
+    }
+
+    /**
+     * Определяет, является ли текущий запрос страницей редактора.
+     * unsafe-eval разрешён только здесь (нужен для Editor.js и его плагинов).
+     *
+     * @return bool
+     */
+    private function isEditorPage(): bool
+    {
+        if ($this->request === null) {
+            return false;
+        }
+
+        $uri = $this->request->getUri();
+
+        return $uri === '/stories/create'
+            || preg_match('#^/stories/[^/]+/edit$#', $uri) === 1;
     }
 
     /**
@@ -58,13 +82,18 @@ class Security
             return implode(' ', $allOrigins);
         };
 
+        // unsafe-eval разрешён ТОЛЬКО на страницах редактора (Editor.js).
+        // unsafe-inline для скриптов запрещён полностью: инлайн-скрипты обязаны
+        // использовать nonce, инлайн-обработчики (onclick и т.п.) — запрещены.
+        $allowUnsafeEval = $this->isEditorPage();
+        $evalKeyword = $allowUnsafeEval ? " 'unsafe-eval'" : '';
+
         $policy = [
             "default-src 'self' " . $mergeOrigins('default_src'),
-            "script-src 'self' 'nonce-{$nonce}' 'unsafe-eval' " . $mergeOrigins('script_src'),
-			
-			"script-src-elem 'self' 'nonce-{$nonce}' 'unsafe-eval' 'unsafe-inline' " . $mergeOrigins('script_src'),
-			"script-src-attr 'self' 'nonce-{$nonce}' 'unsafe-inline' " . $mergeOrigins('script_src'), 
-			
+            "script-src 'self' 'nonce-{$nonce}'" . $evalKeyword . ' ' . $mergeOrigins('script_src'),
+            "script-src-elem 'self' 'nonce-{$nonce}'" . $evalKeyword . ' ' . $mergeOrigins('script_src'),
+            "script-src-attr 'self' 'nonce-{$nonce}' " . $mergeOrigins('script_src'),
+
             "style-src-elem 'self' 'unsafe-inline' " . $mergeOrigins('style_src'),
             "style-src-attr 'self'",
             "frame-src 'self' " . $mergeOrigins('frame_src'),

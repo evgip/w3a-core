@@ -122,7 +122,8 @@ class CoreServiceProvider
 		$container->singleton(Security::class, function ($container) {
 			return new Security(
 				$container->get(Logger::class),
-				$container->get(Config::class)   // ← добавили
+				$container->get(Config::class),
+				$container->get(Request::class)   // ← для маршрутозависимого CSP
 			);
 		});
 
