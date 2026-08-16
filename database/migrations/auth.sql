@@ -37,10 +37,11 @@ CREATE TABLE IF NOT EXISTS `remember_tokens` (
 CREATE TABLE IF NOT EXISTS `email_activations` (
     `id` int UNSIGNED NOT NULL AUTO_INCREMENT,
     `user_id` int UNSIGNED NOT NULL,
-    `token` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+    `selector` varchar(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Публичный идентификатор',
+    `token_hash` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'SHA-256 хэш валидатора',
     `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    UNIQUE KEY `token` (`token`),
+    UNIQUE KEY `uk_selector` (`selector`),
     KEY `fk_email_activation_uid` (`user_id`),
     CONSTRAINT `fk_email_activation_uid` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -48,11 +49,12 @@ CREATE TABLE IF NOT EXISTS `email_activations` (
 CREATE TABLE IF NOT EXISTS `password_resets` (
     `id` int UNSIGNED NOT NULL AUTO_INCREMENT,
     `email` varchar(191) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
-    `token` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+    `selector` varchar(24) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Публичный идентификатор',
+    `token_hash` varchar(64) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'SHA-256 хэш валидатора',
     `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
-    UNIQUE KEY `token` (`token`),
-    KEY `idx_reset_email_token` (`email`, `token`)
+    UNIQUE KEY `uk_selector` (`selector`),
+    KEY `idx_reset_email` (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `auth_attempts` (

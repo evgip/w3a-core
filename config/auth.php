@@ -47,13 +47,15 @@ return [
         'email_activations' => [
             'id'         => 'id',
             'user_id'    => 'user_id',
-            'token'      => 'token',
+            'selector'   => 'selector',
+            'token_hash' => 'token_hash',
             'created_at' => 'created_at',
         ],
         'password_resets' => [
             'id'         => 'id',
             'email'      => 'email',
-            'token'      => 'token',
+            'selector'   => 'selector',
+            'token_hash' => 'token_hash',
             'created_at' => 'created_at',
         ],
     ],

@@ -31,24 +31,12 @@ class CoreServiceProvider
 {
     public function register(Container $container, ?Request $request = null): void
     {
-        // ═══════════════════════════════════════════
         // 1. Request
-        // ═══════════════════════════════════════════
-        if ($request !== null) {
-            $container->singleton(Request::class, function ($container) use ($request) {
-                // Session инжектится в Request, но сессия НЕ стартует автоматически.
-                // Сессия стартует только при реальном обращении к $_SESSION через $session->get/set/flash.
-                // Это значит: анонимные GET-запросы НЕ создают session-файлы и НЕ шлют PHPSESSID cookie.
-                $request->setSession($container->get(Session::class));
-                $request->setAudit($container->get(Audit::class));
-                $request->setContainer($container);
-                return $request;
-            });
-        }
+        // Request уже зарегистрирован как instance в Application::bootstrap().
+        // IpResolver подключается ниже (после регистрации), чтобы Request
+        // использовал единый источник IP-адреса клиента.
 
-        // ═══════════════════════════════════════════
         // 2. Database
-        // ═══════════════════════════════════════════
         $container->singleton(Database::class, function ($container) {
             $config = $container->get(Config::class);
             // ИСПРАВЛЕНО: теперь читает файл database.php (ключ 'database' указывает на имя файла)
@@ -58,29 +46,20 @@ class CoreServiceProvider
         // Указываем контейнеру: когда просят DatabaseInterface, отдавай экземпляр Database
         $container->singleton(DatabaseInterface::class, fn($c) => $c->get(Database::class));
 
-        // ═══════════════════════════════════════════
-        // 3. Session (с ленивой инициализацией)
-        // ═══════════════════════════════════════════
-        // ВАЖНО: session_start() НЕ вызывается здесь.
-        // Сессия стартует только при первом вызове $session->get() / $session->set() / etc.
-        // Это избавляет публичный сайт от 90% лишних session-файлов и cookie для ботов.
+        // 3. Session
         $container->singleton(Session::class, fn() => new Session());
 
-        // ═══════════════════════════════════════════
         // 4. Logger
-        // ═══════════════════════════════════════════
         $container->singleton(Logger::class, function ($container) {
             $config = $container->get(Config::class);
             $app = $container->get(Application::class);
             
             // ИСПРАВЛЕНО: читает файл app.php, ключ log_path
             $logFile = $config->get('app.log_path', $app->getBasePath() . '/storage/logs/app.log');
-            return new Logger($logFile);
+            return new Logger($logFile, 'Y-m-d H:i:s', $container->get(IpResolver::class));
         });
 
-        // ═══════════════════════════════════════════
         // 5. IpResolver
-        // ═══════════════════════════════════════════
         $container->singleton(IpResolver::class, function ($container) {
             $config = $container->get(Config::class);
             // ИСПРАВЛЕНО: читает файл app.php, ключ trusted_proxies
@@ -88,10 +67,12 @@ class CoreServiceProvider
             return new IpResolver($trustedProxies);
         });
 
-        // ═══════════════════════════════════════════
+        // Единый источник IP: Request::getIp() делегирует IpResolver
+        if ($request !== null) {
+            $request->setIpResolver($container->get(IpResolver::class));
+        }
+
         // 6. Audit
-        // ═══════════════════════════════════════════
-        // Audit получает Session, но сессия не стартует до первого использования.
         $container->singleton(Audit::class, function ($container) {
             return new Audit(
                 $container->get(\W3a\Core\Contracts\AuditStorageInterface::class),
@@ -100,16 +81,12 @@ class CoreServiceProvider
             );
         });
 
-        // ═══════════════════════════════════════════
         // 7. Validator
-        // ═══════════════════════════════════════════
         $container->bind(Validator::class, function ($container) {
             return new Validator($container->get(Database::class));
         });
 
-        // ═══════════════════════════════════════════
         // 8. RateLimiter
-        // ═══════════════════════════════════════════
         $container->singleton(RateLimiter::class, function ($container) {
             return new RateLimiter(
                 $container->get(\W3a\Core\Contracts\RateLimitStorageInterface::class),
@@ -120,9 +97,7 @@ class CoreServiceProvider
             );
         });
 
-        // ═══════════════════════════════════════════
         // 9. Firewall
-        // ═══════════════════════════════════════════
         $container->singleton(Firewall::class, function ($container) {
             return new Firewall(
                 $container->get(\W3a\Core\Contracts\BannedIpRepositoryInterface::class),
@@ -130,9 +105,7 @@ class CoreServiceProvider
             );
         });
 
-        // ═══════════════════════════════════════════
         // 10. Router
-        // ═══════════════════════════════════════════
         $container->singleton(Router::class, function ($container) {
             $app = $container->get(Application::class);
             $basePath = $app->getBasePath();
@@ -145,34 +118,26 @@ class CoreServiceProvider
             );
         });
 
-        // ═══════════════════════════════════════════
         // 11. Security
-        // ═══════════════════════════════════════════
-        $container->singleton(Security::class, function ($container) {
-            return new Security(
-                $container->get(Logger::class),
-                $container->get(Config::class),
-                $container->get(Request::class)   // ← для маршрутозависимого CSP
-            );
-        });
+		$container->singleton(Security::class, function ($container) {
+			return new Security(
+				$container->get(Logger::class),
+				$container->get(Config::class),
+				$container->get(Request::class)   // ← для маршрутозависимого CSP
+			);
+		});
 
-        // ═══════════════════════════════════════════
         // 12. Container (сам себя)
-        // ═══════════════════════════════════════════
         $container->instance(Container::class, $container);
 
-        // ═══════════════════════════════════════════
         // 13. Event Dispatcher
-        // ═══════════════════════════════════════════
         if (!$container->has(EventDispatcher::class)) {
             $container->singleton(EventDispatcher::class, function ($container) {
                 return new EventDispatcher($container->get(Logger::class));
             });
         }
 
-        // ═══════════════════════════════════════════
         // 14. View & ViewFinder
-        // ═══════════════════════════════════════════
         $container->singleton(View::class, fn() => new View());
         $container->singleton(ViewFinder::class, function ($container) {
             $app = $container->get(Application::class);
@@ -184,9 +149,7 @@ class CoreServiceProvider
             );
         });
 
-        // ═══════════════════════════════════════════
-        // 15. Cache (безопасное хранение: serialize + шардирование)
-        // ═══════════════════════════════════════════
+        // 15. Cache
         $container->singleton(FileCache::class, function ($container) {
             $config = $container->get(Config::class);
             $app = $container->get(Application::class);
@@ -206,7 +169,7 @@ class CoreServiceProvider
                 $config->getInt('cache.database.ttl', 3600)
             );
         });
-        
+		
         // ═══════════════════════════════════════════
         // 16. AUTH: Модели
         // ═══════════════════════════════════════════
@@ -240,7 +203,7 @@ class CoreServiceProvider
                 fn() => new \W3a\Core\Auth\UserIdProvider()
             );
         }
-        
+		
         // ═══════════════════════════════════════════
         // 18. STORAGE: Менеджер дисков
         // ═══════════════════════════════════════════

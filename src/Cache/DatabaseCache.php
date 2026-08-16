@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace W3a\Core\Cache;
 
-use W3a\Core\Database;
+use W3a\Core\Database\Database;
 
 class DatabaseCache
 {

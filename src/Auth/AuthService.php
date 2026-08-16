@@ -125,8 +125,7 @@ class AuthService
         }
 
         // Генерируем токен активации и отправляем письмо
-        $token = bin2hex(random_bytes(32));
-        $this->emailActivationModel->createToken($userId, $token);
+        $token = $this->emailActivationModel->createToken($userId);
         $this->sendActivationEmail($email, $username, $token);
 
         return $userId;

@@ -7,6 +7,7 @@ namespace W3a\Core\Http;
 use W3a\Core\Exceptions\CsrfException;
 use W3a\Core\Support\Audit;
 use W3a\Core\Foundation\Container;
+use W3a\Core\Security\IpResolver;
 
 /**
  * Класс для работы с HTTP-запросом.
@@ -29,6 +30,9 @@ class Request
     /** @var Container|null DI-контейнер (внедряется через setContainer() или конструктор) */
     private ?Container $container = null;
 
+    /** @var IpResolver|null Единый источник IP-адреса клиента */
+    private ?IpResolver $ipResolver = null;
+
     /** @var string|null Кэш CSRF-токена в рамках одного запроса */
     private ?string $cachedCsrfToken = null;
 
@@ -42,11 +46,13 @@ class Request
     public function __construct(
         ?Audit $audit = null,
         ?Session $session = null,
-        ?Container $container = null
+        ?Container $container = null,
+        ?IpResolver $ipResolver = null
     ) {
         $this->audit = $audit;
         $this->session = $session;
         $this->container = $container;
+        $this->ipResolver = $ipResolver;
     }
 
     /**
@@ -71,6 +77,14 @@ class Request
     public function setContainer(Container $container): void
     {
         $this->container = $container;
+    }
+
+    /**
+     * Сеттер для IpResolver (если не передан в конструктор)
+     */
+    public function setIpResolver(IpResolver $ipResolver): void
+    {
+        $this->ipResolver = $ipResolver;
     }
 
     /**
@@ -421,10 +435,17 @@ class Request
     }
 
     /**
-     * Получить IP клиента
+     * Получить IP клиента.
+     * 
+     * Использует единый источник правды IpResolver (учитывает доверенные proxy,
+     * Cloudflare и т.п.). Если IpResolver не внедрён — fallback на REMOTE_ADDR.
      */
     public function getIp(): string
     {
+        if ($this->ipResolver !== null) {
+            return $this->ipResolver->getClientIp();
+        }
+
         return $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
     }
 

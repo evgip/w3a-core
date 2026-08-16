@@ -22,19 +22,28 @@ class PasswordResetToken
         $this->table = $config->get('auth.tables.password_resets', 'password_resets');
         $this->cols = $config->getArray('auth.columns.password_resets', [
             'email'      => 'email',
-            'token'      => 'token',
+            'selector'   => 'selector',
+            'token_hash' => 'token_hash',
             'created_at' => 'created_at',
         ]);
     }
 
     /**
      * Создает новую запись с токеном восстановления для указанного email.
+     *
+     * В базе хранится только SHA-256 хэш валидатора; публичный селектор
+     * используется для поиска записи. Возвращает полный токен в формате
+     * "selector:validator" для передачи в письме.
      */
-    public function createToken(string $email, string $token): void
+    public function createToken(string $email): string
     {
+        $selector = bin2hex(random_bytes(9));
+        $validator = bin2hex(random_bytes(32));
+
         $data = [
-            $this->cols['email'] => $email,
-            $this->cols['token'] => $token,
+            $this->cols['email']      => $email,
+            $this->cols['selector']   => $selector,
+            $this->cols['token_hash'] => hash('sha256', $validator),
         ];
 
         $columns = '`' . implode('`, `', array_keys($data)) . '`';
@@ -42,15 +51,31 @@ class PasswordResetToken
         $sql = "INSERT INTO `{$this->table}` ({$columns}) VALUES ({$placeholders})";
         
         $this->db->query($sql, $data);
+
+        return $selector . ':' . $validator;
     }
 
     /**
-     * Ищет запись восстановления пароля по токену.
+     * Ищет запись восстановления пароля по полному токену "selector:validator".
+     * Сравнение валидатора идёт через hash_equals (защита от timing-атак).
      */
     public function findByToken(string $token): ?array
     {
-        $sql = "SELECT * FROM `{$this->table}` WHERE `{$this->cols['token']}` = ?";
-        return $this->db->fetchOne($sql, [$token]);
+        $parts = explode(':', $token, 2);
+        if (count($parts) !== 2 || $parts[0] === '' || $parts[1] === '') {
+            return null;
+        }
+
+        [$selector, $validator] = $parts;
+
+        $sql = "SELECT * FROM `{$this->table}` WHERE `{$this->cols['selector']}` = ?";
+        $record = $this->db->fetchOne($sql, [$selector]);
+
+        if ($record && hash_equals($record[$this->cols['token_hash']], hash('sha256', $validator))) {
+            return $record;
+        }
+
+        return null;
     }
 
     /**
@@ -58,8 +83,21 @@ class PasswordResetToken
      */
     public function deleteByToken(string $token): void
     {
-        $sql = "DELETE FROM `{$this->table}` WHERE `{$this->cols['token']}` = ?";
-        $this->db->execute($sql, [$token]);
+        $parts = explode(':', $token, 2);
+        if (count($parts) !== 2 || $parts[0] === '') {
+            return;
+        }
+
+        $this->deleteBySelector($parts[0]);
+    }
+
+    /**
+     * Удаляет запись восстановления по публичному селектору.
+     */
+    public function deleteBySelector(string $selector): void
+    {
+        $sql = "DELETE FROM `{$this->table}` WHERE `{$this->cols['selector']}` = ?";
+        $this->db->execute($sql, [$selector]);
     }
 
     /**

@@ -8,11 +8,13 @@ use InvalidArgumentException;
 use RuntimeException;
 use W3a\Core\Support\Logger;
 use W3a\Core\Contracts\DatabaseInterface; 
+use W3a\Core\Security\IpResolver;
 
 abstract class Model
 {
     protected DatabaseInterface $db;
     protected ?Logger $logger;
+    protected ?IpResolver $ipResolver;
 
     protected string $table;
     protected string $primaryKey = 'id';
@@ -28,10 +30,12 @@ abstract class Model
 
     public function __construct(
         DatabaseInterface $db,
-        ?Logger $logger = null
+        ?Logger $logger = null,
+        ?IpResolver $ipResolver = null
     ) {
         $this->db = $db;
         $this->logger = $logger;
+        $this->ipResolver = $ipResolver;
     }
 
     // =========================================================================
@@ -280,7 +284,9 @@ abstract class Model
             $this->logger->warning("Mass Assignment Attempt", [
                 'model' => static::class,
                 'rejected_fields' => array_keys($rejectedKeys),
-                'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
+                'ip' => $this->ipResolver !== null
+                    ? $this->ipResolver->getClientIp()
+                    : ($_SERVER['REMOTE_ADDR'] ?? 'unknown')
             ]);
         }
         return $filteredData;
@@ -395,4 +401,5 @@ abstract class Model
     public function getDatabase(): Database { return $this->db; }
     public function setDatabase(Database $db): void { $this->db = $db; }
     public function setLogger(Logger $logger): void { $this->logger = $logger; }
+    public function setIpResolver(IpResolver $ipResolver): void { $this->ipResolver = $ipResolver; }
 }

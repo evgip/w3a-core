@@ -5,11 +5,13 @@ declare(strict_types=1);
 namespace W3a\Core\Support;
 
 use RuntimeException;
+use W3a\Core\Security\IpResolver;
 
 class Logger
 {
     private string $logFile;
     private string $dateFormat;
+    private ?IpResolver $ipResolver;
 
     /**
      * Конструктор с инъекцией пути к файлу логов.
@@ -18,7 +20,7 @@ class Logger
      *                             Если null, используется путь по умолчанию внутри ядра.
      * @param string $dateFormat Формат даты для записей в логе
      */
-    public function __construct(?string $logFile = null, string $dateFormat = 'Y-m-d H:i:s')
+    public function __construct(?string $logFile = null, string $dateFormat = 'Y-m-d H:i:s', ?IpResolver $ipResolver = null)
     {
         // Если путь не передан, используем надежный fallback относительно ядра
         if ($logFile === null) {
@@ -28,6 +30,7 @@ class Logger
 
         $this->logFile = $logFile;
         $this->dateFormat = $dateFormat;
+        $this->ipResolver = $ipResolver;
 
         // Создаём директорию, если её нет
         $logDir = dirname($this->logFile);
@@ -44,7 +47,12 @@ class Logger
     public function log(string $level, string $message, array $context = []): void
     {
         $timestamp = date($this->dateFormat);
-        $ip = $_SERVER['REMOTE_ADDR'] ?? 'CLI';
+        $ip = 'CLI';
+        if (isset($_SERVER['REMOTE_ADDR'])) {
+            $ip = $this->ipResolver !== null
+                ? $this->ipResolver->getClientIp()
+                : $_SERVER['REMOTE_ADDR'];
+        }
 
         $contextStr = !empty($context)
             ? ' | Контекст: ' . json_encode($context, JSON_UNESCAPED_UNICODE)

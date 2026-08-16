@@ -30,9 +30,7 @@ class PasswordResetService
             return true; // Не раскрываем, существует ли email
         }
 
-        $token = bin2hex(random_bytes(32));
-        $this->tokenModel->createToken($email, $token);
-
+        $token = $this->tokenModel->createToken($email);
         $resetUrl = $this->getResetUrl($token);
         $this->sendResetEmail($user['email'], $user['username'], $resetUrl);
 
