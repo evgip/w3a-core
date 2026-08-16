@@ -86,7 +86,7 @@ class Asset
     {
         try {
             if (self::$container !== null && self::$container->has(Config::class)) {
-                return self::$container->get(Config::class)->get('config.app.theme', 'default');
+                return self::$container->get(Config::class)->get('app.theme', 'default');
             }
         } catch (\Throwable $e) {
             // Игнорируем ошибки контейнера и переходим к fallback
@@ -347,7 +347,7 @@ class Asset
     {
         try {
             if (self::$container !== null && self::$container->has(Config::class)) {
-                return self::$container->get(Config::class)->get('config.app.env', 'development') === 'development';
+                return self::$container->get(Config::class)->get('app.env', 'development') === 'development';
             }
         } catch (\Throwable $e) {
             // Fallback

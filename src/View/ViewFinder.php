@@ -477,7 +477,7 @@ class ViewFinder
      */
     public function getActiveTheme(): string
     {
-        return $this->config->get('config.app.theme', 'default');
+        return $this->config->get('app.theme', 'default');
     }
 
     /**
@@ -499,6 +499,6 @@ class ViewFinder
      */
     private function isDevelopment(): bool
     {
-        return $this->config->get('config.app.env', 'development') === 'development';
+        return $this->config->get('app.env', 'development') === 'development';
     }
 }
