@@ -15,10 +15,4 @@ class JsonResponse extends Response
             ['Content-Type' => 'application/json']
         );
     }
-
-    public function send(): void
-    {
-        parent::send();
-        exit;
-    }
 }

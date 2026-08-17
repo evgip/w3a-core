@@ -23,12 +23,12 @@ class ExceptionHandler
     {
         if ($e instanceof CsrfException) {
             $this->handleCsrf($e);
-            exit;
+            return;
         }
 
         if ($e instanceof HttpException) {
             $this->handleHttp($e);
-            exit;
+            return;
         }
 
         // Все остальные исключения (включая фатальные ошибки PHP) идут сюда

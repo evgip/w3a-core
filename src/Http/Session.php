@@ -8,10 +8,12 @@ use RuntimeException;
 
 /**
  * Сервис для безопасного управления сессиями PHP.
- * 
- * Предоставляет объектно-ориентированный интерфейс для работы с $_SESSION,
- * включая поддержку flash-сообщений (данные, доступные только для следующего запроса)
- * и защиту от атак фиксирования сессии (Session Fixation).
+ *
+ * Сессия стартует ЛЕНИВО:
+ * - Чтение (get/has/all/id/getFlash) запускает сессию только если у клиента
+ *   уже есть session-cookie — анонимные запросы без cookie не создают
+ *   session-файл и не получают PHPSESSID.
+ * - Запись (set/flash/regenerate) запускает сессию всегда.
  */
 class Session
 {
@@ -20,39 +22,51 @@ class Session
      */
     private bool $started = false;
 
-    /**
-     * Конструктор. Автоматически запускает сессию при создании экземпляра.
-     */
     public function __construct()
     {
-        $this->start();
     }
 
     /**
-     * Запуск сессии с защитой от повторного запуска.
-     * 
-     * Проверяет текущий статус сессии и запускает её только если она ещё не активна.
-     * 
+     * Запущена ли сессия в данный момент.
+     */
+    public function isStarted(): bool
+    {
+        return $this->started || session_status() === PHP_SESSION_ACTIVE;
+    }
+
+    /**
+     * Полный запуск сессии (создаёт новую, если её нет).
+     *
      * @throws RuntimeException Если не удалось запустить сессию
      */
     public function start(): void
     {
-        if ($this->started) {
+        if ($this->isStarted()) {
             return;
         }
 
-        // Если сессия уже активна (запущена глобально или другим экземпляром)
-        if (session_status() === PHP_SESSION_ACTIVE) {
-            $this->started = true;
-            return;
-        }
-
-        // Если сессия не запущена, пытаемся её запустить
         if (session_status() === PHP_SESSION_NONE) {
             if (!session_start()) {
                 throw new RuntimeException('Не удалось запустить сессию (Failed to start session)');
             }
-            $this->started = true;
+        }
+
+        $this->started = true;
+    }
+
+    /**
+     * Ленивый запуск для чтения: сессия стартует только если она уже существует
+     * (у клиента есть session-cookie). Для анонимных запросов без cookie
+     * сессия НЕ создаётся.
+     */
+    private function startForReading(): void
+    {
+        if ($this->isStarted()) {
+            return;
+        }
+
+        if (isset($_COOKIE[session_name()])) {
+            $this->start();
         }
     }
 
@@ -65,6 +79,7 @@ class Session
      */
     public function get(string $key, mixed $default = null): mixed
     {
+        $this->startForReading();
         return $_SESSION[$key] ?? $default;
     }
 
@@ -76,6 +91,7 @@ class Session
      */
     public function set(string $key, mixed $value): void
     {
+        $this->start();
         $_SESSION[$key] = $value;
     }
 
@@ -87,6 +103,7 @@ class Session
      */
     public function has(string $key): bool
     {
+        $this->startForReading();
         return isset($_SESSION[$key]);
     }
 
@@ -97,7 +114,10 @@ class Session
      */
     public function delete(string $key): void
     {
-        unset($_SESSION[$key]);
+        $this->startForReading();
+        if ($this->isStarted()) {
+            unset($_SESSION[$key]);
+        }
     }
 
     /**
@@ -117,6 +137,7 @@ class Session
      */
     public function all(): array
     {
+        $this->startForReading();
         return $_SESSION ?? [];
     }
 
@@ -125,13 +146,15 @@ class Session
      */
     public function clear(): void
     {
-        $_SESSION = [];
+        if ($this->isStarted()) {
+            $_SESSION = [];
+        }
     }
 
     /**
      * Полностью уничтожить сессию.
-     * 
-     * Удаляет cookie сессии на стороне клиента, уничтожает данные на сервере 
+     *
+     * Удаляет cookie сессии на стороне клиента, уничтожает данные на сервере
      * и очищает глобальный массив $_SESSION.
      */
     public function destroy(): void
@@ -162,8 +185,8 @@ class Session
 
     /**
      * Установить flash-сообщение.
-     * 
-     * Flash-сообщения хранятся в сессии и автоматически удаляются 
+     *
+     * Flash-сообщения хранятся в сессии и автоматически удаляются
      * при первом же обращении к ним через getFlash() или allFlashes().
      * Идеально подходят для сообщений об успехе или ошибке после редиректа.
      *
@@ -172,6 +195,7 @@ class Session
      */
     public function flash(string $key, mixed $message): void
     {
+        $this->start();
         $_SESSION['flash'][$key] = $message;
     }
 
@@ -183,6 +207,7 @@ class Session
      */
     public function hasFlash(string $key): bool
     {
+        $this->startForReading();
         return isset($_SESSION['flash'][$key]);
     }
 
@@ -194,6 +219,7 @@ class Session
      */
     public function getFlash(string $key): mixed
     {
+        $this->startForReading();
         if (isset($_SESSION['flash'][$key])) {
             $message = $_SESSION['flash'][$key];
             unset($_SESSION['flash'][$key]); // Удаляем после прочтения
@@ -209,6 +235,7 @@ class Session
      */
     public function allFlashes(): array
     {
+        $this->startForReading();
         $flashes = $_SESSION['flash'] ?? [];
         unset($_SESSION['flash']); // Очищаем весь блок flash после чтения
         return $flashes;
@@ -221,14 +248,15 @@ class Session
      */
     public function id(): string
     {
+        $this->startForReading();
         return session_id();
     }
 
     /**
      * Сгенерировать новый идентификатор сессии.
-     * 
-     * Критически важно вызывать этот метод при изменении уровня привилегий 
-     * пользователя (например, при входе в систему или выходе), 
+     *
+     * Критически важно вызывать этот метод при изменении уровня привилегий
+     * пользователя (например, при входе в систему или выходе),
      * чтобы предотвратить атаки фиксирования сессии (Session Fixation).
      *
      * @param bool $deleteOldSession Удалять ли файл старой сессии на сервере (по умолчанию true для безопасности)
@@ -236,6 +264,7 @@ class Session
      */
     public function regenerate(bool $deleteOldSession = true): bool
     {
+        $this->start();
         return session_regenerate_id($deleteOldSession);
     }
 

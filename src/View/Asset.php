@@ -31,6 +31,15 @@ class Asset
     /** @var Container|null Контейнер для получения сервисов (Config, Logger, Application) */
     private static ?Container $container = null;
 
+    /** @var array<string, array<int,string>> In-memory кэш обнаруженных файлов (ext => пути) */
+    private static array $discovered = [];
+
+    /** @var string|null Замемоизированное имя активной темы */
+    private static ?string $activeTheme = null;
+
+    /** Время жизни файлового манифеста в dev-режиме (сек) — через него подхватываются новые файлы */
+    private const DEV_MANIFEST_TTL = 2;
+
     /**
      * Установить контейнер зависимостей.
      * Вызывается один раз при инициализации приложения (в Application::bootstrap).
@@ -84,22 +93,29 @@ class Asset
      */
     private static function getActiveTheme(): string
     {
+        if (self::$activeTheme !== null) {
+            return self::$activeTheme;
+        }
+
         try {
             if (self::$container !== null && self::$container->has(Config::class)) {
-                return self::$container->get(Config::class)->get('app.theme', 'default');
+                self::$activeTheme = (string)self::$container->get(Config::class)->get('app.theme', 'default');
+                return self::$activeTheme;
             }
         } catch (\Throwable $e) {
             // Игнорируем ошибки контейнера и переходим к fallback
         }
 
         // Используем getBasePath() вместо dirname(__DIR__)
-        $configPath = self::getBasePath() . '/app/Config/config.php';
+        $configPath = self::getBasePath() . '/app/Config/app.php';
         if (file_exists($configPath)) {
             $config = require $configPath;
-            return $config['app']['theme'] ?? 'default';
+            self::$activeTheme = (string)($config['theme'] ?? 'default');
+            return self::$activeTheme;
         }
 
-        return 'default';
+        self::$activeTheme = 'default';
+        return self::$activeTheme;
     }
 
     /**
@@ -155,6 +171,10 @@ class Asset
     public static function forceRebuild(): void
     {
         self::init();
+        self::$discovered = [];
+        foreach (['css', 'js'] as $extension) {
+            self::clearManifest($extension);
+        }
         self::buildCss();
         self::buildJs();
     }
@@ -165,8 +185,38 @@ class Asset
 
     private static function discoverFiles(string $extension): array
     {
+        // In-memory кэш: в рамках одного запроса css()/adminCss()/js()
+        // и build*() вызывают discoverFiles несколько раз — сканируем ФС один раз.
+        if (isset(self::$discovered[$extension])) {
+            return self::$discovered[$extension];
+        }
+
+        $files = null;
+
+        // Файловый манифест экономим только в dev (в prod сканирование происходит
+        // только при ручной пересборке forceRebuild(), где важна актуальность).
+        if (self::isDevelopment()) {
+            $files = self::loadManifest($extension);
+        }
+
+        if ($files === null) {
+            $files = self::scanAssets($extension);
+            if (self::isDevelopment()) {
+                self::saveManifest($extension, $files);
+            }
+        }
+
+        self::$discovered[$extension] = $files;
+        return $files;
+    }
+
+    /**
+     * Реальное сканирование файловой системы (рекурсивный обход).
+     */
+    private static function scanAssets(string $extension): array
+    {
         $discovered = [];
-        
+
         // Используем getBasePath()
         $modulesPath = self::getBasePath() . '/app/Modules';
         $theme = self::getActiveTheme();
@@ -183,14 +233,94 @@ class Asset
         usort($discovered, function ($a, $b) {
             $isCommonA = strpos($a, 'app' . DIRECTORY_SEPARATOR . 'Modules' . DIRECTORY_SEPARATOR . 'Common') !== false;
             $isCommonB = strpos($b, 'app' . DIRECTORY_SEPARATOR . 'Modules' . DIRECTORY_SEPARATOR . 'Common') !== false;
-            
+
             if ($isCommonA && !$isCommonB) return -1;
             if (!$isCommonA && $isCommonB) return 1;
-            
+
             return strcmp($a, $b);
         });
 
         return $discovered;
+    }
+
+    /**
+     * Путь к файлу манифеста для расширения.
+     */
+    private static function manifestPath(string $extension): string
+    {
+        return self::getBasePath() . '/storage/cache/assets_' . $extension . '.php';
+    }
+
+    /**
+     * Загрузка списка файлов из манифеста (null, если нет или устарел).
+     */
+    private static function loadManifest(string $extension): ?array
+    {
+        $file = self::manifestPath($extension);
+
+        if (!is_file($file)) {
+            return null;
+        }
+
+        $data = \W3a\Core\Support\PhpArrayFile::read($file);
+        if (!is_array($data) || !isset($data['files'], $data['roots'])) {
+            return null;
+        }
+
+        // Инвалидация по mtime корневых директорий: добавление/удаление модуля или темы.
+        foreach ($data['roots'] as $root => $mtime) {
+            if ((is_dir((string)$root) ? filemtime((string)$root) : 0) !== (int)$mtime) {
+                return null;
+            }
+        }
+
+        // В dev — короткий TTL, чтобы новые вложенные файлы подхватывались без ручной очистки.
+        if (isset($data['checked_at']) && (time() - (int)$data['checked_at']) > self::DEV_MANIFEST_TTL) {
+            return null;
+        }
+
+        return $data['files'];
+    }
+
+    /**
+     * Атомарное сохранение манифеста.
+     */
+    private static function saveManifest(string $extension, array $files): void
+    {
+        $file = self::manifestPath($extension);
+        $dir = dirname($file);
+        if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+            return;
+        }
+
+        $roots = [];
+        $modulesPath = self::getBasePath() . '/app/Modules';
+        if (is_dir($modulesPath)) {
+            $roots[$modulesPath] = filemtime($modulesPath);
+        }
+        $themePath = self::getBasePath() . '/themes/' . self::getActiveTheme();
+        if (is_dir($themePath)) {
+            $roots[$themePath] = filemtime($themePath);
+        }
+
+        $data = [
+            'files' => $files,
+            'roots' => $roots,
+            'checked_at' => time(),
+        ];
+
+        \W3a\Core\Support\PhpArrayFile::write($file, $data);
+    }
+
+    /**
+     * Удаление манифеста.
+     */
+    private static function clearManifest(string $extension): void
+    {
+        $file = self::manifestPath($extension);
+        if (is_file($file)) {
+            @unlink($file);
+        }
     }
 
     private static function scanDirectory(string $directory, string $extension): array
@@ -210,14 +340,15 @@ class Asset
     {
         $cssFiles = self::discoverFiles('css');
         $needRebuild = false;
+        $theme = strtolower(self::getActiveTheme());
 
         $mtimeApp = file_exists(self::$distCssFile) ? filemtime(self::$distCssFile) : 0;
         $mtimeAdmin = file_exists(self::$distAdminCssFile) ? filemtime(self::$distAdminCssFile) : 0;
 
         foreach ($cssFiles as $path) {
             if (file_exists($path)) {
-                $isAdminFile = self::isAdminAsset($path);
-                
+                $isAdminFile = self::isAdminAsset($path, $theme);
+
                 $targetMtime = $isAdminFile ? $mtimeAdmin : $mtimeApp;
 
                 if (filemtime($path) > $targetMtime) {
@@ -242,6 +373,7 @@ class Asset
         $appCount = 0;
         $adminCount = 0;
         $rootDir = self::getBasePath();
+        $theme = strtolower(self::getActiveTheme());
 
         foreach ($files as $path) {
             if (file_exists($path)) {
@@ -249,7 +381,7 @@ class Asset
                 $content = "/* Source: {$shortPath} */" . PHP_EOL . file_get_contents($path) . PHP_EOL . PHP_EOL;
 
                 // 🔥 ИСПОЛЬЗУЕМ НОВЫЙ НАДЕЖНЫЙ МЕТОД ПРОВЕРКИ 🔥
-                if (self::isAdminAsset($path)) {
+                if (self::isAdminAsset($path, $theme)) {
                     $adminCss .= $content;
                     $adminCount++;
                 } else {
@@ -354,10 +486,10 @@ class Asset
         }
         
         // Используем getBasePath()
-        $configPath = self::getBasePath() . '/app/Config/config.php';
+        $configPath = self::getBasePath() . '/app/Config/app.php';
         if (file_exists($configPath)) {
             $config = require $configPath;
-            return ($config['app']['env'] ?? 'development') === 'development';
+            return ($config['env'] ?? 'development') === 'development';
         }
         
         return true;
@@ -367,11 +499,11 @@ class Asset
      * Проверяет, относится ли файл ассетов к панели администратора.
      * Использует нормализацию пути для надежности на Windows/Linux и независимости от регистра.
      */
-    private static function isAdminAsset(string $path): bool
+    private static function isAdminAsset(string $path, ?string $theme = null): bool
     {
         // Приводим путь к нижнему регистру и заменяем обратные слеши на прямые
         $normalizedPath = strtolower(str_replace('\\', '/', $path));
-        $theme = strtolower(self::getActiveTheme());
+        $theme = strtolower($theme ?? self::getActiveTheme());
 
         return (strpos($normalizedPath, 'app/modules/admin') !== false) ||
                (strpos($normalizedPath, "themes/{$theme}/admin") !== false);

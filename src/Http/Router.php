@@ -14,6 +14,7 @@ use W3a\Core\Http\Request;
 
 use W3a\Core\Security\RateLimiter;
 use W3a\Core\Support\Logger;
+use W3a\Core\Support\PhpArrayFile;
 
 class Router
 {
@@ -40,6 +41,17 @@ class Router
 
     protected array $currentGroupMiddleware = [];
     protected string $currentGroupPrefix = '';
+
+    /**
+     * Индекс маршрутов по статическому первому сегменту URI.
+     * Позволяет выполнять preg_match только по кандидатам, а не по всем маршрутам.
+     * Структура: [METHOD][prefix] = [['regex' => ..., 'order' => int], ...]
+     */
+    protected array $routeIndex = [];
+    protected bool $routeIndexBuilt = false;
+
+    /** Бакет для маршрутов с динамическим первым сегментом (например, /{username}) */
+    private const DYNAMIC_BUCKET = '{dynamic}';
 
     public function addMiddlewareGroup(string $name, array $middlewares): void
     {
@@ -86,12 +98,15 @@ class Router
     {
         $isProduction = $this->config->getString('app.env', 'development') === 'production';
 
-        if ($isProduction && file_exists($this->cacheFile)) {
-            $cache = require $this->cacheFile;
-            $this->routes = $cache['routes'] ?? [];
-            $this->namedRoutes = $cache['namedRoutes'] ?? [];
-            $this->routeMiddleware = $cache['routeMiddleware'] ?? [];
-            return;
+        if ($isProduction) {
+            $cache = PhpArrayFile::read($this->cacheFile);
+            if ($cache !== null) {
+                $this->routes = $cache['routes'] ?? [];
+                $this->namedRoutes = $cache['namedRoutes'] ?? [];
+                $this->routeMiddleware = $cache['routeMiddleware'] ?? [];
+                $this->routeIndexBuilt = false;
+                return;
+            }
         }
 
         $this->loadModulesRoutes();
@@ -122,6 +137,8 @@ class Router
         ?string $name = null,
         array $middleware = []
     ): void {
+        $this->routeIndexBuilt = false;
+
         $fullRoute = $this->currentGroupPrefix . $route;
         $allMiddleware = array_merge($this->currentGroupMiddleware, $middleware);
         $regexRoute = preg_replace('/{([a-zA-Z0-9_]+)}/', '(?P<$1>[^/]+)', $fullRoute);
@@ -175,16 +192,7 @@ class Router
             'routeMiddleware' => $this->routeMiddleware,
         ];
 
-        $cacheContent = "<?php" . PHP_EOL;
-        $cacheContent .= "/* Автоматически сгенерированный кэш маршрутов */" . PHP_EOL;
-        $cacheContent .= "/* Сгенерировано: " . date('Y-m-d H:i:s') . " */" . PHP_EOL;
-        $cacheContent .= "return " . var_export($cacheData, true) . ";" . PHP_EOL;
-
-        $cacheDir = dirname($this->cacheFile);
-        if (!is_dir($cacheDir)) {
-            mkdir($cacheDir, 0755, true);
-        }
-        file_put_contents($this->cacheFile, $cacheContent);
+        PhpArrayFile::write($this->cacheFile, $cacheData);
     }
 
     public function clearCache(): void
@@ -221,6 +229,7 @@ class Router
     {
         // ✅ КРИТИЧЕСКИ ВАЖНО: Загружаем маршруты ПЕРЕД обработкой запроса
         $this->ensureRoutesLoaded();
+        $this->ensureRouteIndexBuilt();
         
         $uri = $this->request->getUri();
         $method = $this->request->getMethod();
@@ -232,9 +241,20 @@ class Router
             return;
         }
 
-        foreach ($this->routes[$method] as $routeRegex => $routeData) {
+        // Отбираем кандидатов по статическому первому сегменту URI.
+        // Только по ним выполняется preg_match (вместо перебора всех маршрутов).
+        $candidates = [];
+        foreach ($this->candidateBuckets($uri) as $bucket) {
+            foreach ($this->routeIndex[$method][$bucket] ?? [] as $entry) {
+                $candidates[$entry['order']] = $entry['regex'];
+            }
+        }
+        ksort($candidates); // сохраняем порядок регистрации маршрутов
+
+        foreach ($candidates as $routeRegex) {
             if (preg_match($routeRegex, $uri, $matches)) {
                 $params = array_filter($matches, 'is_string', ARRAY_FILTER_USE_KEY);
+                $routeData = $this->routes[$method][$routeRegex];
                 $this->currentRouteName = $routeData['name'] ?? null;
                 $middleware = $this->routeMiddleware[$routeRegex] ?? [];
                 $this->executeWithMiddleware($routeData['action'], $params, $middleware);
@@ -245,27 +265,80 @@ class Router
         $this->triggerError(404, "Route not found");
     }
 
+    /**
+     * Строит индекс маршрутов по статическому первому сегменту.
+     * Вызывается лениво перед первым dispatch().
+     */
+    protected function ensureRouteIndexBuilt(): void
+    {
+        if ($this->routeIndexBuilt) {
+            return;
+        }
+
+        $this->routeIndex = [];
+        foreach ($this->routes as $method => $routes) {
+            $order = 0;
+            foreach ($routes as $regex => $routeData) {
+                $prefix = $this->extractStaticPrefix((string)($routeData['original_uri'] ?? ''));
+                $this->routeIndex[$method][$prefix][] = [
+                    'regex' => $regex,
+                    'order' => $order++,
+                ];
+            }
+        }
+
+        $this->routeIndexBuilt = true;
+    }
+
+    /**
+     * Извлекает статический первый сегмент маршрута.
+     * Если сегмент динамический ({param}) — возвращает DYNAMIC_BUCKET.
+     * Корневой маршрут '/' — пустая строка.
+     */
+    private function extractStaticPrefix(string $uri): string
+    {
+        $uri = ltrim($uri, '/');
+        $firstSeg = explode('/', $uri, 2)[0];
+
+        if ($firstSeg === '') {
+            return '';
+        }
+
+        return str_contains($firstSeg, '{') ? self::DYNAMIC_BUCKET : $firstSeg;
+    }
+
+    /**
+     * Возвращает список бакетов индекса, которые нужно проверить для данного URI.
+     */
+    private function candidateBuckets(string $uri): array
+    {
+        $firstSeg = explode('/', ltrim($uri, '/'), 2)[0];
+
+        $buckets = [$firstSeg];
+        if ($firstSeg !== self::DYNAMIC_BUCKET) {
+            $buckets[] = self::DYNAMIC_BUCKET;
+        }
+
+        return $buckets;
+    }
+
     protected function applyRateLimiting(string $uri, string $method): void
     {
         $rateLimiter = $this->container->get(RateLimiter::class);
         $rateLimitConfig = $this->config->getArray('rate_limit.rules', []);
 
+        // RateLimiter::check() бросает RateLimitExceededException (HTTP 429),
+        // которая обрабатывается централизованно в ExceptionHandler.
         if ($method === 'POST') {
             $authRoutes = $rateLimitConfig['auth.submit']['routes'] ?? ['/login', '/register'];
             if (in_array($uri, $authRoutes)) {
-                if (!$rateLimiter->check('auth.submit')) {
-                    $rateLimiter->block();
-                }
+                $rateLimiter->check('auth.submit');
                 return;
             }
 
-            if (!$rateLimiter->check('global.post')) {
-                $rateLimiter->block();
-            }
+            $rateLimiter->check('global.post');
         } else {
-            if (!$rateLimiter->check('global.get')) {
-                $rateLimiter->block();
-            }
+            $rateLimiter->check('global.get');
         }
     }
 

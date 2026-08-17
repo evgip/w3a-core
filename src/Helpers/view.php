@@ -52,10 +52,11 @@ if (!function_exists('__')) {
 
 /**
  * Подключение partial-шаблона с поддержкой каскадного поиска (Fallback Chain).
- * Ищет файл в следующем порядке:
+ * Ищет файл через ViewFinder (с кэшированием пути) в следующем порядке:
  * 1. Переопределение в активной теме для конкретного модуля.
  * 2. Глобальное переопределение в активной теме.
  * 3. Оригинальный файл внутри модуля.
+ * 4. Fallback в модуль Common.
  *
  * @param string $path Путь в формате 'Модуль::файл' (например, 'Users::_avatar').
  * @param array $vars Переменные, которые будут извлечены (extract) и доступны внутри шаблона.
@@ -69,33 +70,22 @@ if (!function_exists('partial')) {
     function partial(string $path, array $vars = []): void
     {
         $parts = explode('::', $path);
-        if (count($a = $parts) !== 2) {
+        if (count($parts) !== 2) {
             throw new \InvalidArgumentException("Неверный формат пути partial. Используйте 'Модуль::файл', например: 'Votes::_voters'");
         }
         [$module, $file] = $parts;
 
-        $theme = config('app.theme', 'default');
-        $basePath = container(\W3a\Core\Foundation\Application::class)->getBasePath();
-        
-        $appModulesPath = $basePath . '/app/Modules';
-        $themesPath = $basePath . '/themes';
-
-        $candidates = [
-            "{$themesPath}/{$theme}/Modules/{$module}/Views/{$file}.php",
-            "{$themesPath}/{$theme}/Views/{$file}.php",
-            "{$appModulesPath}/{$module}/Views/{$file}.php",
-        ];
-
-        $filePath = null;
-        foreach ($candidates as $candidate) {
-            if (file_exists($candidate)) {
-                $filePath = $candidate;
-                break;
-            }
-        }
-
-        if ($filePath === null) {
-            throw new \RuntimeException("Partial не найден: '{$path}'. Проверьте пути в теме '{$theme}' или в модуле '{$module}'.");
+        // Резолв пути идёт через ViewFinder — единая точка поиска шаблонов:
+        // 1. Переопределение в активной теме для модуля
+        // 2. Глобальное переопределение в активной теме
+        // 3. Оригинальный файл модуля
+        // 4. Fallback в модуль Common
+        // Плюс кэширование пути (in-memory + файловый в production).
+        try {
+            $viewFinder = container(\W3a\Core\View\ViewFinder::class);
+            $filePath = $viewFinder->find($file, $module);
+        } catch (\RuntimeException $e) {
+            throw new \RuntimeException("Partial не найден: '{$path}'. " . $e->getMessage());
         }
 
         // Используем замыкание, чтобы переменные из $vars не "загрязняли" глобальную область видимости

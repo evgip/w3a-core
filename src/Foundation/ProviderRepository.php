@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace W3a\Core\Foundation;
 
+use W3a\Core\Support\PhpArrayFile;
+
 class ProviderRepository
 {
     private string $basePath;
@@ -61,8 +63,8 @@ class ProviderRepository
         $env = $this->config->get('app.env', 'development');
 
         // В продакшене используем кэш
-        if ($env === 'production' && file_exists($cacheFile)) {
-            $cache = @include $cacheFile;
+        if ($env === 'production') {
+            $cache = PhpArrayFile::read($cacheFile);
             if (is_array($cache) && isset($cache['providers'])) {
                 return $cache['providers'];
             }
@@ -74,11 +76,9 @@ class ProviderRepository
         $modulesMtime = is_dir($modulesPath) ? filemtime($modulesPath) : 0;
         $checkMtime = max($lockMtime, $modulesMtime);
 
-        if (file_exists($cacheFile)) {
-            $cache = @include $cacheFile;
-            if (is_array($cache) && isset($cache['cache_time']) && $cache['cache_time'] >= $checkMtime) {
-                return $cache['providers'];
-            }
+        $cache = PhpArrayFile::read($cacheFile);
+        if (is_array($cache) && isset($cache['cache_time']) && $cache['cache_time'] >= $checkMtime) {
+            return $cache['providers'];
         }
 
         return $this->rebuildCache($cacheFile, $modulesPath);
@@ -144,19 +144,6 @@ class ProviderRepository
 
     private function writeCacheAtomic(string $file, array $data): void
     {
-        $dir = dirname($file);
-        if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
-        }
-
-        $code = "<?php\nreturn " . var_export($data, true) . ";\n";
-        $tmp = $file . '.tmp.' . getmypid();
-        
-        file_put_contents($tmp, $code, LOCK_EX);
-        rename($tmp, $file);
-        
-        if (function_exists('opcache_invalidate')) {
-            opcache_invalidate($file, true);
-        }
+        PhpArrayFile::write($file, $data);
     }
 }

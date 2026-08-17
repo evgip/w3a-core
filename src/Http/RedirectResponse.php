@@ -10,10 +10,4 @@ class RedirectResponse extends Response
     {
         parent::__construct('', $statusCode, ['Location' => $url]);
     }
-
-    public function send(): void
-    {
-        parent::send();
-        exit;
-    }
 }

@@ -17,12 +17,21 @@ class Database implements DatabaseInterface
     private array $config;
     private ?Logger $logger;
 
-    // Статический счётчик SQL запросов
-    private static int $queryCount = 0;
-    
-    // Опционально: логирование всех запросов (для отладки)
-    private static array $queryLog = [];
-    private static bool $enableQueryLog = false;
+    /** @var array<string, \PDOStatement> Кэш подготовленных выражений (по SQL) */
+    private array $statementCache = [];
+
+    /** Максимальный размер кэша statement'ов (защита от неограниченного роста) */
+    private const STATEMENT_CACHE_LIMIT = 100;
+
+    // Счётчики запросов — теперь per-instance:
+    // в PHP-FPM каждый запрос создаёт новый Database (счётчик с нуля),
+    // а статический API ниже делегирует к последнему созданному экземпляру.
+    private int $queryCount = 0;
+    private array $queryLog = [];
+    private bool $enableQueryLog = false;
+
+    /** @var self|null Последний созданный экземпляр (для статического API Benchmark) */
+    private static ?self $lastInstance = null;
 
     public function __construct(array $config, ?Logger $logger = null)
     {
@@ -32,12 +41,17 @@ class Database implements DatabaseInterface
         
         $this->config = $config;
         $this->logger = $logger;
+        self::$lastInstance = $this;
     }
 
     public function getConnection(): PDO
     {
         if ($this->connection === null) {
             $this->connection = $this->createConnection();
+
+            // PDOStatement привязан к конкретному соединению:
+            // при (пере)создании соединения кэш statement'ов сбрасываем.
+            $this->statementCache = [];
         }
         return $this->connection;
     }
@@ -61,6 +75,8 @@ class Database implements DatabaseInterface
             PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
             PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
             PDO::ATTR_EMULATE_PREPARES => false,
+            // sql_mode задаётся при инициализации соединения (один раз), а не отдельным exec()
+            PDO::MYSQL_ATTR_INIT_COMMAND => "SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'",
         ];
 
         try {
@@ -71,8 +87,6 @@ class Database implements DatabaseInterface
                 $options
             );
 
-            $pdo->exec("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'");
-
             return $pdo;
         } catch (PDOException $e) {
             if ($this->logger) {
@@ -82,20 +96,17 @@ class Database implements DatabaseInterface
         }
     }
 
+    /**
+     * Низкоуровневый запрос: prepare + execute, возвращает живой PDOStatement.
+     *
+     * НЕ использует кэш statement'ов, потому что возвращаемый курсор может
+     * потребляться вызывающим кодом асинхронно (в циклах). Повторное использование
+     * одного PDOStatement для двух параллельных fetch сломалось бы.
+     */
     public function query(string $sql, array $params = []): \PDOStatement
     {
-        // Инкрементируем счётчик запросов
-        self::$queryCount++;
-        
-        // Логируем запрос если включено
-        if (self::$enableQueryLog) {
-            self::$queryLog[] = [
-                'sql' => $sql,
-                'params' => $params,
-                'time' => microtime(true),
-            ];
-        }
-        
+        $this->recordQuery($sql, $params);
+
         $stmt = $this->getConnection()->prepare($sql);
         $stmt->execute($params);
         return $stmt;
@@ -103,7 +114,11 @@ class Database implements DatabaseInterface
 
     public function execute(string $sql, array $params = []): int
     {
-        return $this->query($sql, $params)->rowCount();
+        $this->recordQuery($sql, $params);
+
+        $stmt = $this->prepareCached($sql);
+        $stmt->execute($params);
+        return $stmt->rowCount();
     }
 
     public function lastInsertId(): string
@@ -128,18 +143,30 @@ class Database implements DatabaseInterface
 
     public function fetchOne(string $sql, array $params = []): ?array
     {
-        $result = $this->query($sql, $params)->fetch();
+        $this->recordQuery($sql, $params);
+
+        $stmt = $this->prepareCached($sql);
+        $stmt->execute($params);
+        $result = $stmt->fetch();
         return $result === false ? null : $result;
     }
 
     public function fetchAll(string $sql, array $params = []): array
     {
-        return $this->query($sql, $params)->fetchAll();
+        $this->recordQuery($sql, $params);
+
+        $stmt = $this->prepareCached($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
     }
 
     public function fetchColumn(string $sql, array $params = [], int $column = 0): mixed
     {
-        $result = $this->query($sql, $params)->fetchColumn($column);
+        $this->recordQuery($sql, $params);
+
+        $stmt = $this->prepareCached($sql);
+        $stmt->execute($params);
+        $result = $stmt->fetchColumn($column);
         return $result === false ? null : $result;
     }
 
@@ -148,14 +175,56 @@ class Database implements DatabaseInterface
         return $this->getConnection()->prepare($sql);
     }
 
-    // Методы для работы со счётчиком запросов
+    /**
+     * Подготовка выражения с кэшированием.
+     *
+     * Используется ТОЛЬКО в методах, которые полностью потребляют результат
+     * синхронно (fetchOne/fetchAll/fetchColumn/execute) — поэтому один и тот же
+     * statement безопасно переиспользовать для повторных выполнений.
+     */
+    private function prepareCached(string $sql): \PDOStatement
+    {
+        if (isset($this->statementCache[$sql])) {
+            return $this->statementCache[$sql];
+        }
+
+        $stmt = $this->getConnection()->prepare($sql);
+
+        // FIFO-вытеснение при превышении лимита, чтобы кэш не рос бесконечно
+        if (count($this->statementCache) >= self::STATEMENT_CACHE_LIMIT) {
+            array_shift($this->statementCache);
+        }
+        $this->statementCache[$sql] = $stmt;
+
+        return $stmt;
+    }
+
+    /**
+     * Учёт запроса: инкремент счётчика и (опционально) запись в лог.
+     */
+    private function recordQuery(string $sql, array $params = []): void
+    {
+        $this->queryCount++;
+
+        if ($this->enableQueryLog) {
+            $this->queryLog[] = [
+                'sql' => $sql,
+                'params' => $params,
+                'time' => microtime(true),
+            ];
+        }
+    }
+
+    // =========================================================================
+    // Методы для работы со счётчиком запросов (статический API для Benchmark)
+    // =========================================================================
 
     /**
      * Получить количество выполненных SQL запросов
      */
     public static function getQueryCount(): int
     {
-        return self::$queryCount;
+        return self::$lastInstance?->queryCount ?? 0;
     }
 
     /**
@@ -163,8 +232,10 @@ class Database implements DatabaseInterface
      */
     public static function resetQueryCount(): void
     {
-        self::$queryCount = 0;
-        self::$queryLog = [];
+        if (self::$lastInstance !== null) {
+            self::$lastInstance->queryCount = 0;
+            self::$lastInstance->queryLog = [];
+        }
     }
 
     /**
@@ -172,7 +243,9 @@ class Database implements DatabaseInterface
      */
     public static function enableQueryLog(bool $enable = true): void
     {
-        self::$enableQueryLog = $enable;
+        if (self::$lastInstance !== null) {
+            self::$lastInstance->enableQueryLog = $enable;
+        }
     }
 
     /**
@@ -180,7 +253,7 @@ class Database implements DatabaseInterface
      */
     public static function getQueryLog(): array
     {
-        return self::$queryLog;
+        return self::$lastInstance?->queryLog ?? [];
     }
 
     /**
@@ -188,13 +261,15 @@ class Database implements DatabaseInterface
      */
     public static function getQueryStats(): array
     {
+        $instance = self::$lastInstance;
+
         return [
-            'count' => self::$queryCount,
-            'log' => self::$queryLog,
-            'log_enabled' => self::$enableQueryLog,
+            'count' => $instance?->queryCount ?? 0,
+            'log' => $instance?->queryLog ?? [],
+            'log_enabled' => $instance?->enableQueryLog ?? false,
         ];
     }
-	
+
     /**
      * Генерирует плейсхолдеры и биндинги для конструкции IN (...)
      * Избавляет от необходимости писать циклы foreach в моделях.

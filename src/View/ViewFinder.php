@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace W3a\Core\View;
 
 use W3a\Core\Foundation\Config;
+use W3a\Core\Support\PhpArrayFile;
 
 /**
  * Резолвер путей к шаблонам с поддержкой тем (Fallback Chain) и кэшированием.
@@ -46,6 +47,11 @@ class ViewFinder
      * Предотвращает повторную загрузку кэша в рамках одного запроса.
      */
     private bool $cacheLoaded = false;
+
+    /**
+     * @var bool Есть ли несохранённые изменения (кэш сбросится один раз в конце запроса).
+     */
+    private bool $dirty = false;
 
 
     private string $basePath;
@@ -141,8 +147,8 @@ class ViewFinder
         // Сохраняем в in-memory кэш (для повторных вызовов в этом запросе)
         $this->cache[$cacheKey] = $path;
         
-        // Сохраняем в file-based кэш (для повторных запросов)
-        $this->saveCache();
+        // Помечаем кэш "грязным": файл запишется один раз в конце запроса
+        $this->markDirty();
         
         return $path;
     }
@@ -188,7 +194,7 @@ class ViewFinder
 
         // 5. Сохраняем в кэш
         $this->cache[$cacheKey] = $path;
-        $this->saveCache();
+        $this->markDirty();
 
         return $path;
     }
@@ -295,6 +301,9 @@ class ViewFinder
         // Помечаем кэш как загруженный (чтобы не загружать удалённый файл)
         $this->cacheLoaded = true;
         
+        // Сбрасываем флаг "грязного" состояния — писать удалённый кэш не нужно
+        $this->dirty = false;
+        
         // Удаляем file-based кэш с диска
         if (file_exists($this->cacheFile)) {
             unlink($this->cacheFile);
@@ -371,99 +380,75 @@ class ViewFinder
     {
         // Помечаем кэш как загруженный (чтобы не загружать повторно)
         $this->cacheLoaded = true;
-        
+
+        // В development-режиме файловый кэш НЕ используется вовсе:
+        // он не может надёжно отследить появление нового шаблона или смену
+        // приоритета (например, добавление переопределения в теме), поэтому
+        // актуальность гарантирует только in-memory кэш текущего запроса.
+        if ($this->isDevelopment()) {
+            return;
+        }
+
         // Если файл кэша не существует — выходим
         if (!file_exists($this->cacheFile)) {
             return;
         }
-        
+
         // =========================================================================
-        // Проверка актуальности кэша в development-режиме
+        // Загрузка кэша из файла (production)
         // =========================================================================
-        
-        // В development проверяем, не изменились ли модули или тема после создания кэша
-        // Это позволяет автоматически обновлять кэш при разработке без ручной очистки
-        if ($this->isDevelopment()) {
-            $cacheMtime = filemtime($this->cacheFile);
-            
-            // Проверяем mtime директории модулей
-            $modulesMtime = file_exists($this->appPath . '/Modules') 
-                ? filemtime($this->appPath . '/Modules') 
-                : 0;
-            
-            // Проверяем mtime директории активной темы
-            $themePath = $this->themesPath . '/' . $this->getActiveTheme();
-            $themeMtime = file_exists($themePath) ? filemtime($themePath) : 0;
-            
-            // Если модули или тема изменились после создания кэша — сбрасываем кэш
-            if ($modulesMtime > $cacheMtime || $themeMtime > $cacheMtime) {
-                $this->clearCache();
-                return;
-            }
-        }
-        
-        // =========================================================================
-        // Загрузка кэша из файла
-        // =========================================================================
-        
-        try {
-            // Загружаем PHP-массив из файла через require
-            // Формат файла: return ['paths' => [...], 'generated_at' => '...'];
-            $data = require $this->cacheFile;
-            
-            // Проверяем корректность структуры данных
-            if (is_array($data) && isset($data['paths'])) {
-                $this->cache = $data['paths'];
-            }
-        } catch (\Throwable $e) {
-            // Если файл кэша повреждён или недоступен — игнорируем ошибку
-            // и начинаем с пустого кэша (это безопаснее, чем падать с ошибкой)
+
+        // Загружаем PHP-массив из файла: ['paths' => [...], 'generated_at' => '...']
+        // Повреждённый/отсутствующий файл возвращает null — начинаем с пустого кэша.
+        $data = PhpArrayFile::read($this->cacheFile);
+
+        if (is_array($data) && isset($data['paths'])) {
+            $this->cache = $data['paths'];
+        } else {
             $this->cache = [];
         }
     }
 
     /**
-     * Сохранить кэш путей в файл (атомарно).
-     * 
-     * Использует атомарную запись (write to temp file + rename) для защиты от race condition.
-     * Также сбрасывает OPcache для этого файла, чтобы PHP загрузил новую версию.
+     * Пометить кэш как требующий сохранения.
+     * Файл записывается ОДИН раз в конце запроса (register_shutdown_function),
+     * а не на каждый cache-miss — это исключает лишние перезаписи файла.
      */
-    private function saveCache(): void
+    private function markDirty(): void
     {
-        // Создаём директорию для кэша, если она не существует
-        $dir = dirname($this->cacheFile);
-        if (!is_dir($dir)) {
-            mkdir($dir, 0755, true);
+        // В development файловый кэш не используется
+        if ($this->isDevelopment()) {
+            return;
         }
-        
+
+        if ($this->dirty) {
+            return;
+        }
+
+        $this->dirty = true;
+        register_shutdown_function([$this, 'flushCache']);
+    }
+
+    /**
+     * Записать кэш путей в файл (атомарно).
+     * Вызывается один раз в конце запроса через register_shutdown_function.
+     */
+    public function flushCache(): void
+    {
+        if (!$this->dirty) {
+            return;
+        }
+        $this->dirty = false;
+
         // Формируем данные для сохранения
         $data = [
             'generated_at' => date('Y-m-d H:i:s'),
             'theme' => $this->getActiveTheme(),
             'paths' => $this->cache,
         ];
-        
-        // Генерируем PHP-код для сохранения
-        // var_export() создаёт валидный PHP-массив, который можно загрузить через require
-        $code = "<?php\nreturn " . var_export($data, true) . ";\n";
-        
-        // =========================================================================
-        // Атомарная запись (защита от race condition)
-        // =========================================================================
-        
-        // 1. Записываем во временный файл
-        $tmp = $this->cacheFile . '.tmp.' . getmypid();
-        file_put_contents($tmp, $code, LOCK_EX);
-        
-        // 2. Атомарно переименовываем временный файл в целевой
-        // Это гарантирует, что другие процессы никогда не увидят частично записанный файл
-        rename($tmp, $this->cacheFile);
-        
-        // 3. Сбрасываем OPcache для этого файла
-        // Это нужно, чтобы PHP загрузил новую версию кэша, а не старую из OPcache
-        if (function_exists('opcache_invalidate')) {
-            opcache_invalidate($this->cacheFile, true);
-        }
+
+        // Атомарная запись (tmp + rename, защита от race condition)
+        PhpArrayFile::write($this->cacheFile, $data);
     }
 
     // =========================================================================

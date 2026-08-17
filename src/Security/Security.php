@@ -115,7 +115,6 @@ class Security
         header("Content-Security-Policy: " . implode("; ", $policy));
         header("X-Content-Type-Options: nosniff");
         header('X-Frame-Options: SAMEORIGIN');
-        header("X-XSS-Protection: 1; mode=block");
         header("Referrer-Policy: strict-origin-when-cross-origin");
 
         $hsts = $cspConfig['hsts'] ?? [];

@@ -90,11 +90,18 @@ if (!function_exists('env')) {
 if (!function_exists('old')) {
     function old(string $key, mixed $default = ''): string
     {
-        // Мы не можем получить MessageBag напрямую, если он не передан, 
-        // поэтому читаем сессию, но БЕЗ статических костылей. 
-        // (В идеале в шаблонах лучше использовать $errors->getOld('key'))
-        if (session_status() === PHP_SESSION_NONE) @session_start();
-        return $_SESSION['_old_input'][$key] ?? (string)$default;
+        // Читаем старое значение поля через сервис Session (ленивая сессия:
+        // для анонимного запроса без cookie новая сессия не создаётся).
+        try {
+            $session = container(\W3a\Core\Http\Session::class);
+            $oldInput = $session->get('_old_input', []);
+            return (string)($oldInput[$key] ?? $default);
+        } catch (\Throwable $e) {
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                return (string)($_SESSION['_old_input'][$key] ?? $default);
+            }
+            return (string)$default;
+        }
     }
 }
 

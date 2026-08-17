@@ -23,6 +23,11 @@ class RateLimiter
     ) {
     }
 
+    /**
+     * Проверка лимита частоты запросов.
+     *
+     * @throws RateLimitExceededException (HTTP 429) при превышении лимита
+     */
     public function check(string $action): bool
     {
         $config = $this->config->getArray('rate_limit.rules', []);
@@ -40,7 +45,7 @@ class RateLimiter
         }
 
         $identifier = $this->getIdentifier();
-        
+
         $currentRequests = $this->storage->incrementAndGet($identifier, $action, $window);
         $remaining = max(0, $maxRequests - $currentRequests);
 
@@ -49,7 +54,7 @@ class RateLimiter
         header("RateLimit-Reset: {$window}");
 
         if ($currentRequests > $maxRequests) {
-            throw new RateLimitExceededException("Превышен лимит частоты запросов.");
+            throw new RateLimitExceededException();
         }
 
         return true;
@@ -65,14 +70,4 @@ class RateLimiter
         $userAgent = $this->request->getUserAgent() ?? '';
         return 'fingerprint:' . hash('sha256', $ip . '|' . $userAgent);
     }
-	
-	/**
-	 * Отправить HTTP 429 и прервать выполнение.
-	 */
-	public function block(): never
-	{
-		http_response_code(429);
-		header('Content-Type: text/plain; charset=UTF-8');
-		exit('429 Too Many Requests. Превышен лимит частоты запросов.');
-	}
 }

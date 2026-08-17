@@ -28,12 +28,19 @@ class Auth
         }
         self::$isLoopProtect = true;
 
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
+        try {
+            // Ленивая сессия: стартуем только если у клиента уже есть session-cookie.
+            // Анонимные запросы без cookie не создают session-файл и не получают PHPSESSID.
+            if (session_status() === PHP_SESSION_NONE && isset($_COOKIE[session_name()])) {
+                session_start();
+            }
 
-        $_SESSION['last_activity_time'] = time();
-        self::$isLoopProtect = false;
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                $_SESSION['last_activity_time'] = time();
+            }
+        } finally {
+            self::$isLoopProtect = false;
+        }
     }
 
     /**
