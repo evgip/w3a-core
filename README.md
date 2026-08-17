@@ -10,9 +10,11 @@
 - 🎯 **Строгая типизация HTTP-ответов:** Контроллеры возвращают явные объекты `ViewResponse`, `RedirectResponse` или `JsonResponse`. Никаких скрытых `void` или побочных эффектов.
 - 📨 **Единый центр сообщений (MessageBag):** Централизованное управление flash-сообщениями и сохранением данных форм (`old_input`) без прямого манипулирования сессией в контроллерах.
 - 🛠 **Встроенные Коллекции (Collections):** Мощный fluent-интерфейс для работы с массивами данных (`collect()->map()->filter()->pluck()`), избавляющий от громоздких `array_*` функций.
+- 📄 **Пагинация из коробки (Paginator):** Расчёт страниц, offset для SQL и видимый диапазон номеров — общий для всех проектов.
 - ✅ **Декларативная валидация:** Встроенный класс `Validator` с поддержкой правил (`required`, `email`, `unique`, `min`, `regex` и др.) и автоматической обработкой ошибок через `validateRequest()`.
 - 🧩 **Чистая архитектура (DIP):** Ядро не содержит жестких ссылок на классы приложения (`\App\...`). Зависимости явно передаются через DI-контейнер и интерфейсы (Contracts).
 - 🛡️ **Безопасность из коробки:** Встроенная защита от CSRF, XSS (CSP-nonce), Rate Limiting и Firewall (бан IP).
+- 🗄 **Готовые БД-реализации контрактов:** `DatabaseRateLimitStorage`, `DatabaseAuditStorage`, `DatabaseBannedIpRepository` — приложению достаточно зарегистрировать их в `AppServiceProvider`, писать свои классы не нужно.
 - ⚡ **Ленивая загрузка конфигов:** Файлы конфигурации читаются с диска только при первом обращении к их ключам через dot-нотацию.
 - 💾 **Безопасный файловый кэш:** `FileCache` использует `serialize()` + `flock(LOCK_SH)` вместо `require` — нет исполнения произвольного PHP, нет race condition при конкурентной записи. Атомарная запись через tmp + `rename()`, шардирование каталога (2-символьные подпапки) для масштабируемости.
 - 🔐 **Ленивая сессия:** `Session` стартует только при первом обращении к `$_SESSION`. Анонимные GET-запросы не создают session-файлы и не шлют `PHPSESSID` cookie ботам и гостям — экономия ресурсов на 90%+ трафика публичного сайта.
@@ -114,6 +116,22 @@ $storyIds = collect($comments)
     ->toArray();
 ```
 
+### 3. Пагинация (Paginator)
+
+```php
+use W3a\Core\Support\Paginator;
+
+$total = $itemModel->countList($filter);
+$pager = new Paginator($total, 15, (int)$request->query('page', 1));
+
+$items = $itemModel->getList(15, $pager->offset(), $filter);
+
+$this->render('list', [
+    'items' => $items,
+    'pager' => $pager->toArray(), // currentPage, lastPage, total, range, hasPrev, hasNext
+]);
+```
+
 ## 📂 Структура приложения
 
 ```text
@@ -136,15 +154,15 @@ your-app/
 
 ## 🔌 Ключевые интерфейсы (Contracts)
 
-Ядро работает через инверсию зависимостей. Перед использованием функционала, зависящего от бизнес-логики, необходимо зарегистрировать реализации в `AppServiceProvider`:
+Ядро работает через инверсию зависимостей. Интерфейсы, зависящие от бизнес-логики, регистрируются в `AppServiceProvider`:
 
-| Интерфейс | Назначение |
-|-----------|-----------|
-| `Contracts\RateLimitStorageInterface` | Хранилище лимитов запросов (Rate Limiter) |
-| `Contracts\UserIdProviderInterface` | Получение ID текущего авторизованного пользователя |
-| `Contracts\AuditStorageInterface` | Хранилище журнала аудита действий |
-| `Contracts\BannedIpRepositoryInterface` | Проверка заблокированных IP-адресов (Firewall) |
-| `Contracts\ErrorHandlerInterface` | Обработка и рендеринг страниц ошибок (404, 500) |
+| Интерфейс | Назначение | Готовая реализация в ядре |
+|-----------|-----------|---------------------------|
+| `Contracts\RateLimitStorageInterface` | Хранилище лимитов запросов (Rate Limiter) | `Security\DatabaseRateLimitStorage` |
+| `Contracts\UserIdProviderInterface` | Получение ID текущего авторизованного пользователя | — |
+| `Contracts\AuditStorageInterface` | Хранилище журнала аудита действий | `Audit\DatabaseAuditStorage` |
+| `Contracts\BannedIpRepositoryInterface` | Проверка заблокированных IP-адресов (Firewall) | `Security\DatabaseBannedIpRepository` |
+| `Contracts\ErrorHandlerInterface` | Обработка и рендеринг страниц ошибок (404, 500) | `Errors\DefaultErrorHandler` (fallback) |
 
 ### Пример регистрации
 
@@ -154,18 +172,34 @@ your-app/
 namespace App;
 
 use W3a\Core\Foundation\Container;
+use W3a\Core\Database\Database;
+use W3a\Core\Contracts\RateLimitStorageInterface;
+use W3a\Core\Contracts\AuditStorageInterface;
+use W3a\Core\Contracts\BannedIpRepositoryInterface;
 use W3a\Core\Contracts\ErrorHandlerInterface;
-use App\Modules\Errors\Services\ErrorHandler;
 
 class AppServiceProvider
 {
     public function register(Container $container): void
     {
-        // Ленивая регистрация через замыкание (singleton)
-        $container->singleton(ErrorHandlerInterface::class, fn($c) => 
-            new ErrorHandler($c)
+        // Готовые БД-реализации (таблицы создаются миграциями из database/migrations/)
+        $container->singleton(RateLimitStorageInterface::class, fn($c) =>
+            new \W3a\Core\Security\DatabaseRateLimitStorage($c->get(Database::class))
         );
-        
+
+        $container->singleton(AuditStorageInterface::class, fn($c) =>
+            new \W3a\Core\Audit\DatabaseAuditStorage($c->get(Database::class))
+        );
+
+        $container->singleton(BannedIpRepositoryInterface::class, fn($c) =>
+            new \W3a\Core\Security\DatabaseBannedIpRepository($c->get(Database::class))
+        );
+
+        // Ошибки: свой ErrorHandler со своим layout; DefaultErrorHandler — fallback
+        $container->singleton(ErrorHandlerInterface::class, fn($c) =>
+            new \App\Modules\Errors\Services\ErrorHandler($c)
+        );
+
         // Регистрация групп middleware
         $router = $container->get(\W3a\Core\Http\Router::class);
         $router->addMiddlewareGroup('auth', [
@@ -196,14 +230,40 @@ return [
 |-----------|-----------|-----------|
 | `Application` | `W3a\Core\Foundation` | Оркестратор: управление жизненным циклом (bootstrap) |
 | `Container` | `W3a\Core\Foundation` | DI-контейнер (поддержка `singleton`, `bind`, авто-резолв через рефлексию) |
-| `ExceptionHandler`| `W3a\Core\Exceptions` | Централизованная обработка ошибок (без использования исключений для управления потоком редиректов/JSON) |
-| `Router` | `W3a\Core\Http` | Маршрутизация с поддержкой middleware-групп |
+| `ExceptionHandler`| `W3a\Core\Exceptions` | Централизованная обработка ошибок |
+| `Router` | `W3a\Core\Http` | Маршрутизация с поддержкой middleware-групп и индексацией по префиксу |
 | `MessageBag` | `W3a\Core\Support` | Управление flash-сообщениями и данными форм (`old_input`) |
 | `Collection` | `W3a\Core\Support` | Fluent-интерфейс для трансформации массивов данных |
+| `Paginator` | `W3a\Core\Support` | Расчёт пагинации: страницы, offset, диапазон |
+| `PhpArrayFile` | `W3a\Core\Support` | Атомарная запись/чтение PHP-массивов (единый кэш-слой) |
 | `Validator` | `W3a\Core\Support` | Декларативная валидация входных данных с поддержкой БД (`unique`, `exists`) |
 | `Session` | `W3a\Core\Http` | Ленивое управление PHP-сессиями, flash-сообщения, защита от Session Fixation |
 | `FileCache` | `W3a\Core\Cache` | Файловый кэш с serialize, flock и шардированием каталога |
-| `Audit` | `W3a\Core\Support` | Журнал аудита действий с ленивым чтением сессии (для гостей — без старта сессии) |
+| `Audit` | `W3a\Core\Support` | Журнал аудита действий с ленивым чтением сессии |
+| `DatabaseRateLimitStorage` | `W3a\Core\Security` | БД-реализация RateLimitStorageInterface (таблица `rate_limits`) |
+| `DatabaseBannedIpRepository` | `W3a\Core\Security` | БД-реализация BannedIpRepositoryInterface (таблица `banned_ips`) |
+| `DatabaseAuditStorage` | `W3a\Core\Audit` | БД-реализация AuditStorageInterface (таблица `audit_logs`) |
+| `DefaultErrorHandler` | `W3a\Core\Errors` | Fallback-обработчик ошибок (минимальный HTML) |
+
+## 🧰 Хелперы
+
+Ядро предоставляет глобальные функции (загружаются автоматически):
+
+| Функция | Назначение |
+|---------|-----------|
+| `config($key, $default)` | Значение конфигурации (dot-нотация) |
+| `env($key, $default)` | Переменная окружения из `.env` |
+| `container($abstract)` | Сервис из DI-контейнера |
+| `route($name, $params)` | URL по имени маршрута |
+| `redirect($url, $code)` | Редирект |
+| `abort($code, $message)` | Прервать выполнение с HTTP-ошибкой (бросает исключение ядра) |
+| `e($value)` | HTML-экранирование (защита от XSS) |
+| `__($key, $replace)` | Перевод строки |
+| `dt($datetime, $format)` | Форматирование даты из БД / timestamp |
+| `old($key, $default)` | Старое значение поля после ошибки валидации |
+| `csrf_field()` | Скрытое поле с CSRF-токеном |
+| `csp_nonce()` | Nonce для Content Security Policy |
+| `collect($items)` | Создать коллекцию |
 
 ## 💾 Работа с кэшем
 
