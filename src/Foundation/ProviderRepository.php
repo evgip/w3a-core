@@ -25,6 +25,12 @@ class ProviderRepository
     public function load(array $providers): void
     {
         $moduleProviders = $this->getModuleProvidersData();
+
+        // Регистрируем пути к конфигам модулей на КАЖДОМ запросе:
+        // config_path хранится в кэше, но Config в новом процессе пуст,
+        // поэтому пути нужно пере-прикреплять и при чтении из кэша (production).
+        $this->registerModuleConfigPaths($moduleProviders);
+
         $allProviders = array_merge($providers, array_column($moduleProviders, 'class'));
 
         $bootableProviders = [];
@@ -53,6 +59,32 @@ class ProviderRepository
         // Фаза Boot
         foreach ($bootableProviders as $provider) {
             $provider->boot();
+        }
+    }
+
+    /**
+     * Регистрирует пути к конфигам модулей в Config.
+     *
+     * config_path сохраняется в кэше провайдеров, но сам Config в новом
+     * процессе ничего не знает о модульных папках. Поэтому пути
+     * прикрепляются на каждом запросе — и после пересборки кэша,
+     * и при чтении готового кэша (production).
+     */
+    private function registerModuleConfigPaths(array $moduleProviders): void
+    {
+        foreach ($moduleProviders as $key => $data) {
+            $configPath = $data['config_path'] ?? null;
+
+            if (!is_string($configPath) || $configPath === '' || !is_dir($configPath)) {
+                continue;
+            }
+
+            // Для локальных модулей ключ — 'local_<имя>', для пакетов — 'pkg_<md5>'.
+            $moduleName = is_string($key) && str_starts_with($key, 'local_')
+                ? substr($key, 6)
+                : (string)$key;
+
+            $this->config->addModulePath($moduleName, $configPath);
         }
     }
 
@@ -98,10 +130,6 @@ class ProviderRepository
                         'class' => $providerClass,
                         'config_path' => is_dir($configPath) ? $configPath : null,
                     ];
-                    // Сразу добавляем конфиги модуля в Config
-                    if (is_dir($configPath)) {
-                        $this->config->addModulePath(strtolower($module), $configPath);
-                    }
                 }
             }
         }
@@ -124,10 +152,6 @@ class ProviderRepository
                                 'class' => $providerClass,
                                 'config_path' => $configPath,
                             ];
-                            
-                            if (is_dir($configPath)) {
-                                $this->config->addModulePath($packageName, $configPath);
-                            }
                         }
                     }
                 }

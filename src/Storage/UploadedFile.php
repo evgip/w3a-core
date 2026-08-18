@@ -114,12 +114,27 @@ class UploadedFile
     /**
      * Определить реальное расширение по MIME-типу через finfo.
      * Безопаснее, чем доверять расширению из имени файла.
+     *
+     * Для неизвестного MIME-типа возвращается 'bin' — расширение клиента
+     * НИКОГДА не используется как fallback (иначе shell.php сохранится
+     * как xxx.php и может выполниться на публичном диске).
      */
     public function guessExtension(): string
     {
+        return $this->getSafeExtension() ?? 'bin';
+    }
+
+    /**
+     * Определить расширение по MIME-типу через finfo.
+     *
+     * @return string|null Расширение из белого списка, либо null,
+     *                      если MIME-тип не опознан или не разрешён.
+     */
+    public function getSafeExtension(): ?string
+    {
         $mimeType = $this->getMimeType();
-        
-        // Карта популярных MIME-типов в расширения
+
+        // Карта разрешённых MIME-типов в безопасные расширения
         $map = [
             'image/jpeg' => 'jpg',
             'image/jpg' => 'jpg',
@@ -133,7 +148,7 @@ class UploadedFile
             'application/x-rar-compressed' => 'rar',
         ];
 
-        return $map[$mimeType] ?? $this->getExtension() ?: 'bin';
+        return $map[$mimeType] ?? null;
     }
 
     /**

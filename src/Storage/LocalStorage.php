@@ -51,20 +51,39 @@ class LocalStorage implements StorageInterface
             }
         }
 
-        return file_put_contents($fullPath, $contents) !== false;
+        // Атомарная запись: пишем во временный файл, затем rename.
+        // Исключает частично записанные файлы при конкурентном доступе.
+        $tmp = $fullPath . '.tmp.' . getmypid() . '.' . bin2hex(random_bytes(4));
+
+        if (file_put_contents($tmp, $contents, LOCK_EX) === false) {
+            @unlink($tmp);
+            return false;
+        }
+
+        if (!rename($tmp, $fullPath)) {
+            @unlink($tmp);
+            return false;
+        }
+
+        return true;
     }
 
     public function putFile(UploadedFile $file, string $directory = '', ?string $name = null): string
     {
+        // Кастомное имя санитизируем: только безопасные символы, без пути.
+        // Путь/разделители в $name отвергаются, чтобы нельзя было протащить
+        // вложенные папки, обратные слеши или точки (directory traversal).
+        $baseName = $name !== null ? $this->sanitizeFileName($name) : null;
+
         // Генерируем уникальное имя, если не указано
-        $fileName = ($name ?? bin2hex(random_bytes(16))) . '.' . $file->guessExtension();
-        
+        $fileName = ($baseName ?? bin2hex(random_bytes(16))) . '.' . $file->guessExtension();
+
         // Нормализуем путь (защита от directory traversal)
         $directory = $this->normalizePath($directory);
         $relativePath = $directory ? "{$directory}/{$fileName}" : $fileName;
-        
+
         $fullPath = $this->path($relativePath);
-        
+
         // Создаём директорию, если нужно
         $dir = dirname($fullPath);
         if (!is_dir($dir)) {
@@ -77,6 +96,22 @@ class LocalStorage implements StorageInterface
         }
 
         return $relativePath;
+    }
+
+    /**
+     * Санитизация пользовательского имени файла.
+     * Оставляет только буквы, цифры, дефис и подчёркивание — без
+     * разделителей пути, точек и прочих спецсимволов.
+     */
+    private function sanitizeFileName(string $name): string
+    {
+        // basename() отсекает любой путь, переданный в $name
+        $name = basename(str_replace('\\', '/', $name));
+
+        $name = preg_replace('/[^\p{L}\p{N}_-]/u', '_', $name);
+        $name = trim($name, "._-");
+
+        return $name !== '' ? $name : bin2hex(random_bytes(8));
     }
 
     public function get(string $path): string
@@ -235,6 +270,9 @@ class LocalStorage implements StorageInterface
      */
     private function normalizePath(string $path): string
     {
+        // Приводим обратные слеши (Windows) к прямым — иначе '..\..\' пройдёт насквозь
+        $path = str_replace('\\', '/', $path);
+
         // Убираем дублирующиеся слеши
         $path = preg_replace('#/+#', '/', $path);
         

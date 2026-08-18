@@ -264,7 +264,12 @@ class AuthService
         }
 
         $this->createSession($user, false);
-        $this->createRememberCookie($user['id']); // Ротация токена
+
+        // Ротация токена: отзываем старый selector, прежде чем выдать новый.
+        // Иначе украденный старый cookie остаётся валидным до истечения срока.
+        $this->rememberTokenModel->deleteBySelector($selector);
+
+        $this->createRememberCookie($user['id']);
 
         $this->audit->log('auth.remember_success', 'Восстановление сессии по токену', 'auth');
         return true;

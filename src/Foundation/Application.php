@@ -6,6 +6,8 @@ namespace W3a\Core\Foundation;
 
 use W3a\Core\Http\Request;
 use W3a\Core\Exceptions\ExceptionHandler;
+use W3a\Core\Exceptions\IpBannedException;
+use W3a\Core\Exceptions\HttpException;
 use W3a\Core\Support\Lang;
 use W3a\Core\Support\Benchmark;
 use W3a\Core\View\Asset;
@@ -129,14 +131,6 @@ class Application
         $this->setupErrorHandling();
 
         // ═══════════════════════════════════════════
-        // 9. РЕГИСТРАЦИЯ СЕРВИСОВ ЯДРА (CORE)
-        // ═══════════════════════════════════════════
-        // CoreServiceProvider регистрирует все базовые сервисы фреймворка:
-        // Database, Session, Logger, Router, Security, Cache и т.д.
-        $coreProvider = new CoreServiceProvider();
-        $coreProvider->register($this->container, $request);
-
-        // ═══════════════════════════════════════════
         // 10. РЕГИСТРАЦИЯ ПРОВАЙДЕРОВ ПРИЛОЖЕНИЯ И МОДУЛЕЙ
         // ═══════════════════════════════════════════
         // ProviderRepository сканирует:
@@ -158,8 +152,6 @@ class Application
         // ═══════════════════════════════════════════
         // Проверяет IP пользователя по списку заблокированных.
         // Если IP в бане — выбрасывает HttpException(403).
-        $this->checkFirewall();
-
         return $this;
     }
 
@@ -174,6 +166,10 @@ class Application
     public function run(): void
     {
         try {
+            // Firewall: проверка IP выполняется внутри try, чтобы IpBannedException
+            // гарантированно дошёл до ExceptionHandler (403).
+            $this->checkFirewall();
+
             // Получаем Router из контейнера и запускаем диспетчеризацию.
             // Router сам найдёт нужный контроллер, применит middleware и выполнит action.
             $this->container->get(\W3a\Core\Http\Router::class)->dispatch();
@@ -254,17 +250,28 @@ class Application
 
     /**
      * Проверка IP-адреса через Firewall.
-     * 
-     * Если IP в бане — Firewall выбросит HttpException(403),
-     * который будет обработан в ExceptionHandler.
+     *
+     * - Если IP заблокирован — пробрасываем IpBannedException (403),
+     *   он обрабатывается в ExceptionHandler.
+     * - Ошибки хранилища (БД и т.п.) обрабатываются по политике:
+     *   app.firewall.fail_closed = false (по умолчанию, fail-open) — пропускаем запрос,
+     *   true (fail-closed) — блокируем запрос (503).
      */
     private function checkFirewall(): void
     {
         try {
             $firewall = $this->container->make(\W3a\Core\Security\Firewall::class);
             $firewall->check();
+        } catch (IpBannedException $e) {
+            throw $e;
         } catch (\Throwable $e) {
-            error_log("Firewall check skipped: " . $e->getMessage());
+            $failClosed = $this->container->get(Config::class)->getBool('app.firewall.fail_closed', false);
+
+            error_log("Firewall check failed: " . $e->getMessage());
+
+            if ($failClosed) {
+                throw new HttpException(503, 'Сервис временно недоступен. Попробуйте позже.');
+            }
         }
     }
 }
