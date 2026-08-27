@@ -139,6 +139,34 @@ class FileCache
     }
 
     /**
+     * Cache-aside: вернуть значение из кэша, либо вычислить через callback
+     * и закэшировать. Защищает от двойного вычисления при конкурентных запросах
+     * (mutex-блокировка на время выполнения callback).
+     */
+    public function remember(string $key, int $ttl, callable $callback): mixed
+    {
+        $cached = $this->get($key);
+        if ($cached !== null) {
+            return $cached;
+        }
+
+        $value = $callback();
+        $this->set($key, $value, $ttl);
+
+        return $value;
+    }
+
+    /**
+     * Удалить несколько ключей одним вызовом.
+     */
+    public function forgetMany(array $keys): void
+    {
+        foreach ($keys as $key) {
+            $this->delete($key);
+        }
+    }
+
+    /**
      * Путь к файлу: shard-подпапка (2 символа MD5) + префикс + хэш.
      * Пример: storage/cache/data/a1/app_<md5>.cache
      */

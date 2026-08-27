@@ -44,10 +44,10 @@ class Lang
         if (file_exists($langFile)) {
             $data = require $langFile;
             if (is_array($data)) {
-                // Сливаем напрямую в корень, чтобы __('forum') сразу находил 'Форум'
+                // Сливаем напрямую в корень, чтобы __('articles') сразу находил 'Статьи'
                 self::$translations = array_merge(self::$translations, $data);
                 
-                // Также сохраняем под ключом языка на случай вызова __('ru.forum')
+                // Также сохраняем под ключом языка на случай вызова __('ru.articles')
                 self::$translations[self::$currentLang] = $data;
             }
         }

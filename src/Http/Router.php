@@ -141,7 +141,12 @@ class Router
 
         $fullRoute = $this->currentGroupPrefix . $route;
         $allMiddleware = array_merge($this->currentGroupMiddleware, $middleware);
-        $regexRoute = preg_replace('/{([a-zA-Z0-9_]+)}/', '(?P<$1>[^/]+)', $fullRoute);
+$regexRoute = preg_replace_callback('/\{([a-zA-Z0-9_]+)\}/', function ($m) {
+            $name = $m[1];
+            return ($name === 'path' || str_ends_with($name, '_path'))
+                ? '(?P<' . $name . '>.+)'
+                : '(?P<' . $name . '>[^/]+)';
+        }, $fullRoute);
         $regexRoute = '#^' . $regexRoute . '$#s';
 
         $this->routes[strtoupper($method)][$regexRoute] = [
