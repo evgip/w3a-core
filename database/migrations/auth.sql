@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS `users` (
     `username` varchar(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
     `email` varchar(150) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
     `password` varchar(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+	`password_set_at` timestamp NULL DEFAULT NULL COMMENT 'Когда пользователь задал пароль (NULL — OAuth, ещё не задан)',
     `role` enum('user','moderator','admin') CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'user',
     `is_active` tinyint(1) NOT NULL DEFAULT '0',
     `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
