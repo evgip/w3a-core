@@ -49,6 +49,8 @@ class HtmlSanitizer
             'div', 'button', 'span',
             // SVG и его примитивы
             'svg', 'circle', 'line', 'path', 'rect', 'g', 'polyline', 'polygon',
+            // Встраивания (видео, embed)
+            'iframe',
         ],
         // Ограниченный набор для комментариев (Markdown)
         'comment' => [
@@ -108,6 +110,7 @@ class HtmlSanitizer
         'path'   => ['d', 'fill', 'stroke', 'stroke-width'],
         'rect'   => ['x', 'y', 'width', 'height', 'fill', 'stroke', 'stroke-width'],
         'g'      => ['fill', 'stroke', 'stroke-width'],
+        'iframe' => ['src', 'width', 'height', 'frameborder', 'allowfullscreen', 'allow', 'loading', 'title'],
     ];
 
     /**
